@@ -140,6 +140,10 @@ fun WalkingApp() {
             confirmButton = {
                 TextButton(onClick = {
                     showMoveConfirm = null
+                    scope.launch {
+                        store.saveRegion(target.copy(visited = true))
+                        regions = store.loadRegions()
+                    }
                     screen = AppScreen.Map(target.id, simulated = true)
                 }) { Text("이동") }
             },
