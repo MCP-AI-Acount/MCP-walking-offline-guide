@@ -57,7 +57,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
-import com.mcpauto.walkingofflineguide.data.CityStop
+import com.mcpauto.walkingofflineguide.data.GeoCatalog
 import com.mcpauto.walkingofflineguide.data.RegionRecord
 import com.mcpauto.walkingofflineguide.data.ScheduleLeg
 import com.mcpauto.walkingofflineguide.data.TripConfig
@@ -384,29 +384,36 @@ private fun SetupFlowScreen(
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val downloader = remember { RegionDownloadManager(context, store) }
+    val catalog = remember { GeoCatalog(context) }
 
     var step by remember { mutableIntStateOf(1) }
     var homeCountry by remember { mutableStateOf(initial.homeCountry) }
     var destCountry by remember { mutableStateOf(initial.destinationCountry) }
-    var tripStart by remember { mutableStateOf(PoiLogic.formatDate(initial.tripStartEpochDay.takeIf { it > 0 } ?: LocalDate.now().toEpochDay())) }
-    var tripEnd by remember { mutableStateOf(PoiLogic.formatDate(initial.tripEndEpochDay.takeIf { it > 0 } ?: LocalDate.now().plusDays(7).toEpochDay())) }
+    var tripStart by remember {
+        mutableStateOf(
+            if (initial.tripStartEpochDay > 0) PoiLogic.formatDate(initial.tripStartEpochDay)
+            else formatDateDigitsInput(LocalDate.now().toString().replace("-", "")),
+        )
+    }
+    var tripEnd by remember {
+        mutableStateOf(
+            if (initial.tripEndEpochDay > 0) PoiLogic.formatDate(initial.tripEndEpochDay)
+            else formatDateDigitsInput(LocalDate.now().plusDays(7).toString().replace("-", "")),
+        )
+    }
     var showHotel by remember { mutableStateOf(initial.showHotel) }
     var showRestaurant by remember { mutableStateOf(initial.showRestaurant) }
     var showSight by remember { mutableStateOf(initial.showSight) }
     var autoDelete by remember { mutableStateOf(initial.autoDeleteAfterTrip) }
     var skipHub by remember { mutableStateOf(initial.skipHubMenu) }
+    var scheduleLocked by remember { mutableStateOf(false) }
 
     val legs = remember {
         mutableStateListOf(
-            initial.legs.firstOrNull() ?: ScheduleLeg(
-                id = store.newLegId(),
-                walkStart = "",
-                waypoints = emptyList(),
-                walkDestination = "",
-            ),
+            initial.legs.firstOrNull()?.let { it.copy(legConfirmed = false) }
+                ?: ScheduleLeg(id = store.newLegId()),
         )
     }
-    var waypointInputs = remember { mutableStateListOf("") }
     var downloading by remember { mutableStateOf(false) }
     var downloadProgress by remember { mutableStateOf<DownloadProgress?>(null) }
     var error by remember { mutableStateOf("") }
@@ -431,148 +438,169 @@ private fun SetupFlowScreen(
     Column(
         Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp),
     ) {
-        Text("여행 설정 ${step}/2", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+        Text("여행 설정 $step/3", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
 
-        if (step == 1) {
-            Text("1단계 — 기본 설정", fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(top = 12.dp))
-            OutlinedTextField(homeCountry, { homeCountry = it }, label = { Text("모국 (GPS/WiFi 기반)") }, modifier = Modifier.fillMaxWidth())
-            Text("원하는 정보", modifier = Modifier.padding(top = 8.dp))
-            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                FilterChip(showHotel, { showHotel = !showHotel }, { Text("숙소") })
-                FilterChip(showRestaurant, { showRestaurant = !showRestaurant }, { Text("음식점") })
-                FilterChip(showSight, { showSight = !showSight }, { Text("명소") })
+        when (step) {
+            1 -> {
+                Text("1단계 — 기본 설정", fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(top = 12.dp))
+                CountryAutocompleteField(homeCountry, { homeCountry = it }, catalog, "모국 (GPS·자동완성)")
+                Text("원하는 정보", modifier = Modifier.padding(top = 8.dp))
+                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    FilterChip(showHotel, { showHotel = !showHotel }, { Text("숙소") })
+                    FilterChip(showRestaurant, { showRestaurant = !showRestaurant }, { Text("음식점") })
+                    FilterChip(showSight, { showSight = !showSight }, { Text("명소") })
+                }
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Checkbox(autoDelete, { autoDelete = it })
+                    Text("여행 기간 종료 후 자동 삭제")
+                }
+                Button(onClick = { step = 2 }, modifier = Modifier.fillMaxWidth().padding(top = 12.dp)) { Text("다음") }
             }
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Checkbox(autoDelete, { autoDelete = it })
-                Text("여행 기간 종료 후 자동 삭제")
-            }
-            Button(onClick = { step = 2 }, modifier = Modifier.fillMaxWidth().padding(top = 12.dp)) { Text("다음") }
-        } else {
-            Text("2단계 — 목적지·일정", fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(top = 12.dp))
-            OutlinedTextField(destCountry, { destCountry = it }, label = { Text("여행국") }, modifier = Modifier.fillMaxWidth())
-            OutlinedTextField(tripStart, { tripStart = it }, label = { Text("시작일 (YYYY-MM-DD)") }, modifier = Modifier.fillMaxWidth())
-            OutlinedTextField(tripEnd, { tripEnd = it }, label = { Text("종료일") }, modifier = Modifier.fillMaxWidth())
-
-            Text(
-                "일정을 나눠 추가하시면 다운로드가 더 정확해집니다.\n하루에 여러 도시·한 도시 며칠 모두 가능합니다.",
-                style = MaterialTheme.typography.bodySmall,
-                color = Color.Gray,
-                modifier = Modifier.padding(vertical = 8.dp),
-            )
-
-            legs.forEachIndexed { idx, leg ->
-                Text("일정 ${idx + 1}", fontWeight = FontWeight.Bold, modifier = Modifier.padding(top = 8.dp))
-                OutlinedTextField(
-                    leg.walkStart,
-                    { legs[idx] = leg.copy(walkStart = it) },
-                    label = { Text("도보 시작지 (도시명)") },
-                    modifier = Modifier.fillMaxWidth(),
+            2 -> {
+                Text("2단계 — 목적지·일정", fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(top = 12.dp))
+                CountryAutocompleteField(
+                    destCountry,
+                    { destCountry = it; scheduleLocked = false },
+                    catalog,
+                    "여행국 (자동완성)",
                 )
-                waypointInputs.forEachIndexed { wi, w ->
-                    OutlinedTextField(
-                        w,
-                        { waypointInputs[wi] = it },
-                        label = { Text("경유지 ${wi + 1}") },
-                        modifier = Modifier.fillMaxWidth(),
+                if (destCountry.isNotBlank()) {
+                    catalog.resolveCountry(destCountry)?.let { c ->
+                        Text("선택: ${c.nameKo} · 수도 ${c.capital}", style = MaterialTheme.typography.labelSmall, color = Color.Gray)
+                    }
+                }
+                DateMaskField(tripStart, { tripStart = it; scheduleLocked = false }, "시작일")
+                DateMaskField(tripEnd, { tripEnd = it; scheduleLocked = false }, "종료일")
+                Text(
+                    "일정을 나눠 추가하시면 다운로드가 더 정확해집니다.\n하루에 여러 도시·한 도시에 며칠 — 모두 가능합니다.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = Color.Gray,
+                    modifier = Modifier.padding(vertical = 8.dp),
+                )
+
+                legs.forEachIndexed { idx, leg ->
+                    LegRouteEditor(
+                        leg = leg,
+                        legIndex = idx,
+                        countryHint = destCountry,
+                        catalog = catalog,
+                        geocoder = geocoder,
+                        onLegChange = { updated ->
+                            legs[idx] = updated
+                            scheduleLocked = false
+                        },
                     )
+                    if (isLegReady(leg) && !leg.legConfirmed) {
+                        Button(
+                            onClick = { legs[idx] = leg.copy(legConfirmed = true) },
+                            modifier = Modifier.fillMaxWidth(),
+                        ) { Text("이 일정 확정") }
+                    }
                 }
-                IconButton(onClick = { waypointInputs.add("") }) {
-                    Icon(Icons.Default.Add, "경유지 추가")
-                }
-                OutlinedTextField(
-                    leg.walkDestination,
-                    { legs[idx] = leg.copy(walkDestination = it) },
-                    label = { Text("도보 목적지") },
-                    modifier = Modifier.fillMaxWidth(),
-                )
-                Text("도시 이름으로 적어주세요. 경유지가 많을수록 좋습니다.", style = MaterialTheme.typography.labelSmall, color = Color.Gray)
-            }
-            TextButton(onClick = {
-                legs.add(ScheduleLeg(id = store.newLegId()))
-            }) { Text("+ 일정 추가") }
+                TextButton(onClick = {
+                    legs.add(ScheduleLeg(id = store.newLegId()))
+                    scheduleLocked = false
+                }) { Text("+ 다른 일정 추가") }
 
-            downloadProgress?.let { p ->
-                Spacer(Modifier.height(12.dp))
-                LinearProgressIndicator(progress = { p.percent / 100f }, modifier = Modifier.fillMaxWidth())
-                Text(p.label, style = MaterialTheme.typography.bodySmall)
-            }
-
-            if (downloading) {
-                OutlinedButton(
-                    onClick = {
-                        downloader.cancelled = true
-                        downloading = false
-                    },
-                    modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
-                ) { Text("다운로드 취소") }
-            }
-
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                OutlinedButton(onClick = onCancel, modifier = Modifier.weight(1f)) { Text("취소") }
+                val allLegsReady = legs.isNotEmpty() && legs.all { isLegReady(it) && it.legConfirmed }
                 Button(
                     onClick = {
-                        scope.launch {
-                            error = ""
-                            downloading = true
-                            val stops = buildCityStops(legs, waypointInputs)
-                            if (stops.isEmpty()) {
-                                error = "도시 이름을 입력해 주세요."
-                                downloading = false
-                                return@launch
-                            }
-                            try {
-                                val newRegions = downloader.downloadLeg(destCountry, stops) { downloadProgress = it }
-                                val updated = TripConfig(
-                                    homeCountry = homeCountry,
-                                    destinationCountry = destCountry,
-                                    tripStartEpochDay = PoiLogic.parseDate(tripStart).toEpochDay(),
-                                    tripEndEpochDay = PoiLogic.parseDate(tripEnd).toEpochDay(),
-                                    legs = legs.mapIndexed { i, l ->
-                                        l.copy(
-                                            waypoints = waypointInputs.filter { it.isNotBlank() },
-                                            dayStart = i,
-                                            dayEnd = i,
-                                        )
-                                    },
-                                    showHotel = showHotel,
-                                    showRestaurant = showRestaurant,
-                                    showSight = showSight,
-                                    autoDeleteAfterTrip = autoDelete,
-                                    skipHubMenu = skipHub,
-                                    setupComplete = true,
-                                )
-                                store.saveConfig(updated)
-                                val allRegions = store.loadRegions()
-                                downloading = false
-                                onDone(updated, allRegions)
-                            } catch (e: Exception) {
-                                error = e.message ?: "다운로드 실패"
-                                downloading = false
-                            }
+                        if (!allLegsReady) {
+                            error = "모든 일정에서 출발·도착 확인 후 「이 일정 확정」을 눌러 주세요."
+                            return@Button
                         }
+                        scheduleLocked = true
+                        error = ""
+                        step = 3
                     },
-                    enabled = !downloading,
-                    modifier = Modifier.weight(1f),
-                ) { Text("다운로드 시작") }
-            }
+                    enabled = allLegsReady,
+                    modifier = Modifier.fillMaxWidth().padding(top = 12.dp),
+                ) { Text("일정 전체 확정 → 다음") }
 
-            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(top = 8.dp)) {
-                Checkbox(skipHub, { skipHub = it })
-                Text("메뉴 다시 보지 않기")
+                OutlinedButton(onClick = { step = 1 }, modifier = Modifier.fillMaxWidth().padding(top = 6.dp)) {
+                    Text("이전")
+                }
             }
-            if (error.isNotBlank()) Text(error, color = Color.Red)
+            3 -> {
+                Text("3단계 — 다운로드", fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(top = 12.dp))
+                Text(
+                    scheduleSummary(legs, destCountry),
+                    style = MaterialTheme.typography.bodyMedium,
+                    modifier = Modifier.padding(vertical = 8.dp),
+                )
+                Text(
+                    "예상 용량: 약 ${RegionDownloadManager(context, store).estimateBytes(buildStopsFromLegs(legs)) / 1_048_576}MB",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = Color.Gray,
+                )
+
+                downloadProgress?.let { p ->
+                    Spacer(Modifier.height(12.dp))
+                    LinearProgressIndicator(progress = { p.percent / 100f }, modifier = Modifier.fillMaxWidth())
+                    Text(p.label, style = MaterialTheme.typography.bodySmall)
+                }
+
+                if (downloading) {
+                    OutlinedButton(
+                        onClick = { downloader.cancelled = true; downloading = false },
+                        modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
+                    ) { Text("다운로드 취소") }
+                }
+
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedButton(onClick = { step = 2; scheduleLocked = false }, modifier = Modifier.weight(1f)) {
+                        Text("일정 수정")
+                    }
+                    Button(
+                        onClick = {
+                            scope.launch {
+                                error = ""
+                                downloading = true
+                                val stops = buildStopsFromLegs(legs)
+                                if (stops.isEmpty()) {
+                                    error = "확정된 도시가 없습니다."
+                                    downloading = false
+                                    return@launch
+                                }
+                                try {
+                                    downloader.downloadLeg(destCountry, stops) { downloadProgress = it }
+                                    val updated = TripConfig(
+                                        homeCountry = homeCountry,
+                                        destinationCountry = destCountry,
+                                        tripStartEpochDay = PoiLogic.parseDate(tripStart).toEpochDay(),
+                                        tripEndEpochDay = PoiLogic.parseDate(tripEnd).toEpochDay(),
+                                        legs = legs.toList(),
+                                        showHotel = showHotel,
+                                        showRestaurant = showRestaurant,
+                                        showSight = showSight,
+                                        autoDeleteAfterTrip = autoDelete,
+                                        skipHubMenu = skipHub,
+                                        setupComplete = true,
+                                    )
+                                    store.saveConfig(updated)
+                                    onDone(updated, store.loadRegions())
+                                } catch (e: Exception) {
+                                    error = e.message ?: "다운로드 실패"
+                                } finally {
+                                    downloading = false
+                                }
+                            }
+                        },
+                        enabled = !downloading && scheduleLocked,
+                        modifier = Modifier.weight(1f),
+                    ) { Text("다운로드 시작") }
+                }
+
+                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(top = 8.dp)) {
+                    Checkbox(skipHub, { skipHub = it })
+                    Text("메뉴 다시 보지 않기")
+                }
+            }
         }
-    }
-}
 
-private fun buildCityStops(legs: List<ScheduleLeg>, waypoints: List<String>): List<CityStop> {
-    val names = linkedSetOf<String>()
-    legs.forEach { leg ->
-        if (leg.walkStart.isNotBlank()) names.add(leg.walkStart.trim())
-        waypoints.filter { it.isNotBlank() }.forEach { names.add(it.trim()) }
-        if (leg.walkDestination.isNotBlank()) names.add(leg.walkDestination.trim())
+        OutlinedButton(onClick = onCancel, modifier = Modifier.fillMaxWidth().padding(top = 12.dp)) { Text("취소") }
+        if (error.isNotBlank()) Text(error, color = Color.Red, modifier = Modifier.padding(top = 8.dp))
     }
-    return names.map { CityStop(name = it) }
 }
 
 @Composable

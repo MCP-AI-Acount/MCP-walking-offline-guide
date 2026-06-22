@@ -42,17 +42,6 @@ data class CityStop(
 )
 
 @Serializable
-data class ScheduleLeg(
-    val id: String,
-    @SerialName("day_start") val dayStart: Int = 0,
-    @SerialName("day_end") val dayEnd: Int = 0,
-    val cities: List<CityStop> = emptyList(),
-    @SerialName("walk_start") val walkStart: String = "",
-    val waypoints: List<String> = emptyList(),
-    @SerialName("walk_destination") val walkDestination: String = "",
-)
-
-@Serializable
 data class TripConfig(
     @SerialName("home_country") val homeCountry: String = "",
     @SerialName("home_lat") val homeLat: Double = 0.0,

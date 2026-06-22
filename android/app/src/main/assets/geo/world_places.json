@@ -1,0 +1,961 @@
+{
+"countries": [
+{
+"code": "KR",
+"name_ko": "대한민국",
+"name_en": "South Korea",
+"lat": 37.5665,
+"lon": 126.978,
+"capital": "Seoul"
+},
+{
+"code": "JP",
+"name_ko": "일본",
+"name_en": "Japan",
+"lat": 35.6762,
+"lon": 139.6503,
+"capital": "Tokyo"
+},
+{
+"code": "CN",
+"name_ko": "중국",
+"name_en": "China",
+"lat": 39.9042,
+"lon": 116.4074,
+"capital": "Beijing"
+},
+{
+"code": "TW",
+"name_ko": "대만",
+"name_en": "Taiwan",
+"lat": 25.033,
+"lon": 121.5654,
+"capital": "Taipei"
+},
+{
+"code": "HK",
+"name_ko": "홍콩",
+"name_en": "Hong Kong",
+"lat": 22.3193,
+"lon": 114.1694,
+"capital": "Hong Kong"
+},
+{
+"code": "TH",
+"name_ko": "태국",
+"name_en": "Thailand",
+"lat": 13.7563,
+"lon": 100.5018,
+"capital": "Bangkok"
+},
+{
+"code": "VN",
+"name_ko": "베트남",
+"name_en": "Vietnam",
+"lat": 21.0285,
+"lon": 105.8542,
+"capital": "Hanoi"
+},
+{
+"code": "SG",
+"name_ko": "싱가포르",
+"name_en": "Singapore",
+"lat": 1.3521,
+"lon": 103.8198,
+"capital": "Singapore"
+},
+{
+"code": "MY",
+"name_ko": "말레이시아",
+"name_en": "Malaysia",
+"lat": 3.139,
+"lon": 101.6869,
+"capital": "Kuala Lumpur"
+},
+{
+"code": "ID",
+"name_ko": "인도네시아",
+"name_en": "Indonesia",
+"lat": -6.2088,
+"lon": 106.8456,
+"capital": "Jakarta"
+},
+{
+"code": "PH",
+"name_ko": "필리핀",
+"name_en": "Philippines",
+"lat": 14.5995,
+"lon": 120.9842,
+"capital": "Manila"
+},
+{
+"code": "IN",
+"name_ko": "인도",
+"name_en": "India",
+"lat": 28.6139,
+"lon": 77.209,
+"capital": "New Delhi"
+},
+{
+"code": "NP",
+"name_ko": "네팔",
+"name_en": "Nepal",
+"lat": 27.7172,
+"lon": 85.324,
+"capital": "Kathmandu"
+},
+{
+"code": "AE",
+"name_ko": "아랍에미리트",
+"name_en": "United Arab Emirates",
+"lat": 24.4539,
+"lon": 54.3773,
+"capital": "Abu Dhabi"
+},
+{
+"code": "TR",
+"name_ko": "튀르키예",
+"name_en": "Turkey",
+"lat": 39.9334,
+"lon": 32.8597,
+"capital": "Ankara"
+},
+{
+"code": "IL",
+"name_ko": "이스라엘",
+"name_en": "Israel",
+"lat": 31.7683,
+"lon": 35.2137,
+"capital": "Jerusalem"
+},
+{
+"code": "EG",
+"name_ko": "이집트",
+"name_en": "Egypt",
+"lat": 30.0444,
+"lon": 31.2357,
+"capital": "Cairo"
+},
+{
+"code": "MA",
+"name_ko": "모로cco",
+"name_en": "Morocco",
+"lat": 33.9716,
+"lon": -6.8498,
+"capital": "Rabat"
+},
+{
+"code": "ZA",
+"name_ko": "남아프리카",
+"name_en": "South Africa",
+"lat": -25.7461,
+"lon": 28.1881,
+"capital": "Pretoria"
+},
+{
+"code": "FR",
+"name_ko": "프랑스",
+"name_en": "France",
+"lat": 48.8566,
+"lon": 2.3522,
+"capital": "Paris"
+},
+{
+"code": "DE",
+"name_ko": "독일",
+"name_en": "Germany",
+"lat": 52.52,
+"lon": 13.405,
+"capital": "Berlin"
+},
+{
+"code": "IT",
+"name_ko": "이탈리아",
+"name_en": "Italy",
+"lat": 41.9028,
+"lon": 12.4964,
+"capital": "Rome"
+},
+{
+"code": "ES",
+"name_ko": "스페인",
+"name_en": "Spain",
+"lat": 40.4168,
+"lon": -3.7038,
+"capital": "Madrid"
+},
+{
+"code": "PT",
+"name_ko": "포르투갈",
+"name_en": "Portugal",
+"lat": 38.7223,
+"lon": -9.1393,
+"capital": "Lisbon"
+},
+{
+"code": "GB",
+"name_ko": "영국",
+"name_en": "United Kingdom",
+"lat": 51.5074,
+"lon": -0.1278,
+"capital": "London"
+},
+{
+"code": "IE",
+"name_ko": "아일랜드",
+"name_en": "Ireland",
+"lat": 53.3498,
+"lon": -6.2603,
+"capital": "Dublin"
+},
+{
+"code": "NL",
+"name_ko": "네덜란드",
+"name_en": "Netherlands",
+"lat": 52.3676,
+"lon": 4.9041,
+"capital": "Amsterdam"
+},
+{
+"code": "BE",
+"name_ko": "벨기에",
+"name_en": "Belgium",
+"lat": 50.8503,
+"lon": 4.3517,
+"capital": "Brussels"
+},
+{
+"code": "CH",
+"name_ko": "스위스",
+"name_en": "Switzerland",
+"lat": 46.948,
+"lon": 7.4474,
+"capital": "Bern"
+},
+{
+"code": "AT",
+"name_ko": "오스트리아",
+"name_en": "Austria",
+"lat": 48.2082,
+"lon": 16.3738,
+"capital": "Vienna"
+},
+{
+"code": "CZ",
+"name_ko": "체코",
+"name_en": "Czechia",
+"lat": 50.0755,
+"lon": 14.4378,
+"capital": "Prague"
+},
+{
+"code": "PL",
+"name_ko": "폴란드",
+"name_en": "Poland",
+"lat": 52.2297,
+"lon": 21.0122,
+"capital": "Warsaw"
+},
+{
+"code": "HU",
+"name_ko": "헝가리",
+"name_en": "Hungary",
+"lat": 47.4979,
+"lon": 19.0402,
+"capital": "Budapest"
+},
+{
+"code": "GR",
+"name_ko": "그리스",
+"name_en": "Greece",
+"lat": 37.9838,
+"lon": 23.7275,
+"capital": "Athens"
+},
+{
+"code": "HR",
+"name_ko": "크로아티아",
+"name_en": "Croatia",
+"lat": 45.815,
+"lon": 15.9819,
+"capital": "Zagreb"
+},
+{
+"code": "SI",
+"name_ko": "슬로베니아",
+"name_en": "Slovenia",
+"lat": 46.0569,
+"lon": 14.5058,
+"capital": "Ljubljana"
+},
+{
+"code": "NO",
+"name_ko": "노르웨이",
+"name_en": "Norway",
+"lat": 59.9139,
+"lon": 10.7522,
+"capital": "Oslo"
+},
+{
+"code": "SE",
+"name_ko": "스웨덴",
+"name_en": "Sweden",
+"lat": 59.3293,
+"lon": 18.0686,
+"capital": "Stockholm"
+},
+{
+"code": "DK",
+"name_ko": "덴마크",
+"name_en": "Denmark",
+"lat": 55.6761,
+"lon": 12.5683,
+"capital": "Copenhagen"
+},
+{
+"code": "FI",
+"name_ko": "핀란드",
+"name_en": "Finland",
+"lat": 60.1699,
+"lon": 24.9384,
+"capital": "Helsinki"
+},
+{
+"code": "IS",
+"name_ko": "아이슬란드",
+"name_en": "Iceland",
+"lat": 64.1466,
+"lon": -21.9426,
+"capital": "Reykjavik"
+},
+{
+"code": "RU",
+"name_ko": "러시아",
+"name_en": "Russia",
+"lat": 55.7558,
+"lon": 37.6173,
+"capital": "Moscow"
+},
+{
+"code": "US",
+"name_ko": "미국",
+"name_en": "United States",
+"lat": 38.9072,
+"lon": -77.0369,
+"capital": "Washington"
+},
+{
+"code": "CA",
+"name_ko": "캐나다",
+"name_en": "Canada",
+"lat": 45.4215,
+"lon": -75.6972,
+"capital": "Ottawa"
+},
+{
+"code": "MX",
+"name_ko": "멕시코",
+"name_en": "Mexico",
+"lat": 19.4326,
+"lon": -99.1332,
+"capital": "Mexico City"
+},
+{
+"code": "BR",
+"name_ko": "브라질",
+"name_en": "Brazil",
+"lat": -15.7942,
+"lon": -47.8822,
+"capital": "Brasilia"
+},
+{
+"code": "AR",
+"name_ko": "아르헨티나",
+"name_en": "Argentina",
+"lat": -34.6037,
+"lon": -58.3816,
+"capital": "Buenos Aires"
+},
+{
+"code": "CL",
+"name_ko": "칠레",
+"name_en": "Chile",
+"lat": -33.4489,
+"lon": -70.6693,
+"capital": "Santiago"
+},
+{
+"code": "PE",
+"name_ko": "페루",
+"name_en": "Peru",
+"lat": -12.0464,
+"lon": -77.0428,
+"capital": "Lima"
+},
+{
+"code": "CO",
+"name_ko": "콜ombia",
+"name_en": "Colombia",
+"lat": 4.711,
+"lon": -74.0721,
+"capital": "Bogota"
+},
+{
+"code": "AU",
+"name_ko": "호주",
+"name_en": "Australia",
+"lat": -35.2809,
+"lon": 149.13,
+"capital": "Canberra"
+},
+{
+"code": "NZ",
+"name_ko": "뉴질랜드",
+"name_en": "New Zealand",
+"lat": -41.2865,
+"lon": 174.7762,
+"capital": "Wellington"
+}
+],
+"cities": [
+{
+"name": "Seoul",
+"country_code": "KR",
+"country": "대한민국",
+"lat": 37.5665,
+"lon": 126.978
+},
+{
+"name": "Busan",
+"country_code": "KR",
+"country": "대한민국",
+"lat": 35.1796,
+"lon": 129.0756
+},
+{
+"name": "Jeju",
+"country_code": "KR",
+"country": "대한민국",
+"lat": 33.4996,
+"lon": 126.5312
+},
+{
+"name": "Tokyo",
+"country_code": "JP",
+"country": "일본",
+"lat": 35.6762,
+"lon": 139.6503
+},
+{
+"name": "Kyoto",
+"country_code": "JP",
+"country": "일본",
+"lat": 35.0116,
+"lon": 135.7681
+},
+{
+"name": "Osaka",
+"country_code": "JP",
+"country": "일본",
+"lat": 34.6937,
+"lon": 135.5023
+},
+{
+"name": "Beijing",
+"country_code": "CN",
+"country": "중국",
+"lat": 39.9042,
+"lon": 116.4074
+},
+{
+"name": "Shanghai",
+"country_code": "CN",
+"country": "중국",
+"lat": 31.2304,
+"lon": 121.4737
+},
+{
+"name": "Bangkok",
+"country_code": "TH",
+"country": "태국",
+"lat": 13.7563,
+"lon": 100.5018
+},
+{
+"name": "Chiang Mai",
+"country_code": "TH",
+"country": "태국",
+"lat": 18.7883,
+"lon": 98.9853
+},
+{
+"name": "Paris",
+"country_code": "FR",
+"country": "프랑스",
+"lat": 48.8566,
+"lon": 2.3522
+},
+{
+"name": "Lyon",
+"country_code": "FR",
+"country": "프랑스",
+"lat": 45.764,
+"lon": 4.8357
+},
+{
+"name": "Rome",
+"country_code": "IT",
+"country": "이탈리아",
+"lat": 41.9028,
+"lon": 12.4964
+},
+{
+"name": "Venice",
+"country_code": "IT",
+"country": "이탈리아",
+"lat": 45.4408,
+"lon": 12.3155
+},
+{
+"name": "Florence",
+"country_code": "IT",
+"country": "이탈리아",
+"lat": 43.7696,
+"lon": 11.2558
+},
+{
+"name": "Milan",
+"country_code": "IT",
+"country": "이탈리아",
+"lat": 45.4642,
+"lon": 9.19
+},
+{
+"name": "Madrid",
+"country_code": "ES",
+"country": "스페인",
+"lat": 40.4168,
+"lon": -3.7038
+},
+{
+"name": "Barcelona",
+"country_code": "ES",
+"country": "스페인",
+"lat": 41.3874,
+"lon": 2.1686
+},
+{
+"name": "London",
+"country_code": "GB",
+"country": "영국",
+"lat": 51.5074,
+"lon": -0.1278
+},
+{
+"name": "Edinburgh",
+"country_code": "GB",
+"country": "영국",
+"lat": 55.9533,
+"lon": -3.1883
+},
+{
+"name": "Berlin",
+"country_code": "DE",
+"country": "독일",
+"lat": 52.52,
+"lon": 13.405
+},
+{
+"name": "Munich",
+"country_code": "DE",
+"country": "독일",
+"lat": 48.1351,
+"lon": 11.582
+},
+{
+"name": "Vienna",
+"country_code": "AT",
+"country": "오스트리아",
+"lat": 48.2082,
+"lon": 16.3738
+},
+{
+"name": "Prague",
+"country_code": "CZ",
+"country": "체코",
+"lat": 50.0755,
+"lon": 14.4378
+},
+{
+"name": "Amsterdam",
+"country_code": "NL",
+"country": "네덜란드",
+"lat": 52.3676,
+"lon": 4.9041
+},
+{
+"name": "Zurich",
+"country_code": "CH",
+"country": "스위스",
+"lat": 47.3769,
+"lon": 8.5417
+},
+{
+"name": "New York",
+"country_code": "US",
+"country": "미국",
+"lat": 40.7128,
+"lon": -74.006
+},
+{
+"name": "Los Angeles",
+"country_code": "US",
+"country": "미국",
+"lat": 34.0522,
+"lon": -118.2437
+},
+{
+"name": "San Francisco",
+"country_code": "US",
+"country": "미국",
+"lat": 37.7749,
+"lon": -122.4194
+},
+{
+"name": "Washington",
+"country_code": "US",
+"country": "미국",
+"lat": 38.9072,
+"lon": -77.0369
+},
+{
+"name": "Sydney",
+"country_code": "AU",
+"country": "호주",
+"lat": -33.8688,
+"lon": 151.2093
+},
+{
+"name": "Melbourne",
+"country_code": "AU",
+"country": "호주",
+"lat": -37.8136,
+"lon": 144.9631
+},
+{
+"name": "Dubai",
+"country_code": "AE",
+"country": "아랍에미리트",
+"lat": 25.2048,
+"lon": 55.2708
+},
+{
+"name": "Istanbul",
+"country_code": "TR",
+"country": "튀르키예",
+"lat": 41.0082,
+"lon": 28.9784
+},
+{
+"name": "Cairo",
+"country_code": "EG",
+"country": "이집트",
+"lat": 30.0444,
+"lon": 31.2357
+},
+{
+"name": "Cape Town",
+"country_code": "ZA",
+"country": "남아프리카",
+"lat": -33.9249,
+"lon": 18.4241
+},
+{
+"name": "Buenos Aires",
+"country_code": "AR",
+"country": "아르헨티나",
+"lat": -34.6037,
+"lon": -58.3816
+},
+{
+"name": "Rio de Janeiro",
+"country_code": "BR",
+"country": "브라질",
+"lat": -22.9068,
+"lon": -43.1729
+},
+{
+"name": "Mexico City",
+"country_code": "MX",
+"country": "멕시코",
+"lat": 19.4326,
+"lon": -99.1332
+},
+{
+"name": "Vancouver",
+"country_code": "CA",
+"country": "캐나다",
+"lat": 49.2827,
+"lon": -123.1207
+},
+{
+"name": "Ljubljana",
+"country_code": "SI",
+"country": "슬로베니아",
+"lat": 46.0569,
+"lon": 14.5058
+},
+{
+"name": "Zagreb",
+"country_code": "HR",
+"country": "크로아티아",
+"lat": 45.815,
+"lon": 15.9819
+},
+{
+"name": "Athens",
+"country_code": "GR",
+"country": "그리스",
+"lat": 37.9838,
+"lon": 23.7275
+},
+{
+"name": "Dubrovnik",
+"country_code": "HR",
+"country": "크로아티아",
+"lat": 42.6507,
+"lon": 18.0944
+},
+{
+"name": "Taipei",
+"country_code": "TW",
+"country": "대만",
+"lat": 25.033,
+"lon": 121.5654
+},
+{
+"name": "Hong Kong",
+"country_code": "HK",
+"country": "홍콩",
+"lat": 22.3193,
+"lon": 114.1694
+},
+{
+"name": "Hanoi",
+"country_code": "VN",
+"country": "베트남",
+"lat": 21.0285,
+"lon": 105.8542
+},
+{
+"name": "Singapore",
+"country_code": "SG",
+"country": "싱가포르",
+"lat": 1.3521,
+"lon": 103.8198
+},
+{
+"name": "Kuala Lumpur",
+"country_code": "MY",
+"country": "말레이시아",
+"lat": 3.139,
+"lon": 101.6869
+},
+{
+"name": "Jakarta",
+"country_code": "ID",
+"country": "인도네시아",
+"lat": -6.2088,
+"lon": 106.8456
+},
+{
+"name": "Manila",
+"country_code": "PH",
+"country": "필리핀",
+"lat": 14.5995,
+"lon": 120.9842
+},
+{
+"name": "New Delhi",
+"country_code": "IN",
+"country": "인도",
+"lat": 28.6139,
+"lon": 77.209
+},
+{
+"name": "Kathmandu",
+"country_code": "NP",
+"country": "네팔",
+"lat": 27.7172,
+"lon": 85.324
+},
+{
+"name": "Abu Dhabi",
+"country_code": "AE",
+"country": "아랍에미리트",
+"lat": 24.4539,
+"lon": 54.3773
+},
+{
+"name": "Ankara",
+"country_code": "TR",
+"country": "튀르키예",
+"lat": 39.9334,
+"lon": 32.8597
+},
+{
+"name": "Jerusalem",
+"country_code": "IL",
+"country": "이스라엘",
+"lat": 31.7683,
+"lon": 35.2137
+},
+{
+"name": "Rabat",
+"country_code": "MA",
+"country": "모로cco",
+"lat": 33.9716,
+"lon": -6.8498
+},
+{
+"name": "Pretoria",
+"country_code": "ZA",
+"country": "남아프리카",
+"lat": -25.7461,
+"lon": 28.1881
+},
+{
+"name": "Lisbon",
+"country_code": "PT",
+"country": "포르투갈",
+"lat": 38.7223,
+"lon": -9.1393
+},
+{
+"name": "Dublin",
+"country_code": "IE",
+"country": "아일랜드",
+"lat": 53.3498,
+"lon": -6.2603
+},
+{
+"name": "Brussels",
+"country_code": "BE",
+"country": "벨기에",
+"lat": 50.8503,
+"lon": 4.3517
+},
+{
+"name": "Bern",
+"country_code": "CH",
+"country": "스위스",
+"lat": 46.948,
+"lon": 7.4474
+},
+{
+"name": "Warsaw",
+"country_code": "PL",
+"country": "폴란드",
+"lat": 52.2297,
+"lon": 21.0122
+},
+{
+"name": "Budapest",
+"country_code": "HU",
+"country": "헝가리",
+"lat": 47.4979,
+"lon": 19.0402
+},
+{
+"name": "Oslo",
+"country_code": "NO",
+"country": "노르웨이",
+"lat": 59.9139,
+"lon": 10.7522
+},
+{
+"name": "Stockholm",
+"country_code": "SE",
+"country": "스웨덴",
+"lat": 59.3293,
+"lon": 18.0686
+},
+{
+"name": "Copenhagen",
+"country_code": "DK",
+"country": "덴마크",
+"lat": 55.6761,
+"lon": 12.5683
+},
+{
+"name": "Helsinki",
+"country_code": "FI",
+"country": "핀란드",
+"lat": 60.1699,
+"lon": 24.9384
+},
+{
+"name": "Reykjavik",
+"country_code": "IS",
+"country": "아이슬란드",
+"lat": 64.1466,
+"lon": -21.9426
+},
+{
+"name": "Moscow",
+"country_code": "RU",
+"country": "러시아",
+"lat": 55.7558,
+"lon": 37.6173
+},
+{
+"name": "Ottawa",
+"country_code": "CA",
+"country": "캐나다",
+"lat": 45.4215,
+"lon": -75.6972
+},
+{
+"name": "Brasilia",
+"country_code": "BR",
+"country": "브라질",
+"lat": -15.7942,
+"lon": -47.8822
+},
+{
+"name": "Santiago",
+"country_code": "CL",
+"country": "칠레",
+"lat": -33.4489,
+"lon": -70.6693
+},
+{
+"name": "Lima",
+"country_code": "PE",
+"country": "페루",
+"lat": -12.0464,
+"lon": -77.0428
+},
+{
+"name": "Bogota",
+"country_code": "CO",
+"country": "콜ombia",
+"lat": 4.711,
+"lon": -74.0721
+},
+{
+"name": "Canberra",
+"country_code": "AU",
+"country": "호주",
+"lat": -35.2809,
+"lon": 149.13
+},
+{
+"name": "Wellington",
+"country_code": "NZ",
+"country": "뉴질랜드",
+"lat": -41.2865,
+"lon": 174.7762
+}
+]
+}

@@ -70,12 +70,10 @@ class TripStore(private val context: Context) {
     fun todayCityDescription(config: TripConfig, regions: List<RegionRecord>): String {
         val idx = todayLegIndex(config) ?: return "오늘 예정된 일정이 없습니다."
         val leg = config.legs.getOrNull(idx) ?: return ""
-        val names = leg.cities.map { it.name }.ifEmpty {
-            listOfNotNull(
-                leg.walkStart.takeIf { it.isNotBlank() },
-                *leg.waypoints.toTypedArray(),
-                leg.walkDestination.takeIf { it.isNotBlank() },
-            )
+        val names = buildList {
+            if (leg.startPoint.confirmed) add(leg.startPoint.name)
+            addAll(leg.waypoints.filter { it.confirmed }.map { it.name })
+            if (leg.endPoint.confirmed) add(leg.endPoint.name)
         }
         if (names.isEmpty()) return "일정 ${idx + 1}: 도시 정보 없음"
         val desc = names.mapNotNull { name ->
