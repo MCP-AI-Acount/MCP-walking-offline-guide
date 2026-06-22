@@ -86,6 +86,10 @@ class GeoCatalog(context: Context) {
         } ?: searchCities(name, countryHint, 1).firstOrNull()
     }
 
+    fun allCountries(): List<CountryEntry> = countries
+
+    fun allCities(): List<CityEntry> = cities
+
     private fun norm(s: String): String =
         Normalizer.normalize(s.trim().lowercase(), Normalizer.Form.NFD)
             .replace(Regex("\\p{M}+"), "")

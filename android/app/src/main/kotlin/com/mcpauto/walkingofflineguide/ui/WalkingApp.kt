@@ -411,6 +411,7 @@ private fun SetupFlowScreen(
     var downloading by remember { mutableStateOf(false) }
     var downloadProgress by remember { mutableStateOf<DownloadProgress?>(null) }
     var error by remember { mutableStateOf("") }
+    var legToDelete by remember { mutableStateOf<Int?>(null) }
 
     val permissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions(),
@@ -482,6 +483,9 @@ private fun SetupFlowScreen(
                             legs[idx] = updated
                             scheduleLocked = false
                         },
+                        onDeleteLeg = { legToDelete = idx },
+                        canDelete = legs.size > 1 || leg.startPoint.name.isNotBlank() ||
+                            leg.endPoint.name.isNotBlank() || leg.waypoints.any { it.name.isNotBlank() },
                     )
                     if (isLegReady(leg) && !leg.legConfirmed) {
                         Button(
@@ -594,6 +598,29 @@ private fun SetupFlowScreen(
 
         OutlinedButton(onClick = onCancel, modifier = Modifier.fillMaxWidth().padding(top = 12.dp)) { Text("취소") }
         if (error.isNotBlank()) Text(error, color = Color.Red, modifier = Modifier.padding(top = 8.dp))
+    }
+
+    legToDelete?.let { idx ->
+        AlertDialog(
+            onDismissRequest = { legToDelete = null },
+            title = { Text("일정 삭제") },
+            text = { Text("일정 ${idx + 1}을(를) 삭제할까요?") },
+            confirmButton = {
+                TextButton(onClick = {
+                    if (idx in legs.indices) {
+                        legs.removeAt(idx)
+                        if (legs.isEmpty()) {
+                            legs.add(ScheduleLeg(id = store.newLegId()))
+                        }
+                    }
+                    scheduleLocked = false
+                    legToDelete = null
+                }) { Text("삭제", color = Color(0xFFDC2626)) }
+            },
+            dismissButton = {
+                TextButton(onClick = { legToDelete = null }) { Text("취소") }
+            },
+        )
     }
 }
 

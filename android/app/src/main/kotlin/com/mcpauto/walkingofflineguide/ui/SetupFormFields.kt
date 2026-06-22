@@ -227,6 +227,8 @@ fun LegRouteEditor(
     catalog: GeoCatalog,
     geocoder: NominatimGeocoder,
     onLegChange: (ScheduleLeg) -> Unit,
+    onDeleteLeg: (() -> Unit)? = null,
+    canDelete: Boolean = true,
 ) {
     Card(
         modifier = Modifier.fillMaxWidth().padding(vertical = 6.dp),
@@ -241,8 +243,20 @@ fun LegRouteEditor(
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Text("일정 ${legIndex + 1}", fontWeight = FontWeight.Bold)
-                if (leg.legConfirmed) {
-                    Text("확정됨", color = Color(0xFF15803D), style = MaterialTheme.typography.labelMedium)
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    if (leg.legConfirmed) {
+                        Text(
+                            "확정됨",
+                            color = Color(0xFF15803D),
+                            style = MaterialTheme.typography.labelMedium,
+                            modifier = Modifier.padding(end = 4.dp),
+                        )
+                    }
+                    if (canDelete && onDeleteLeg != null) {
+                        IconButton(onClick = onDeleteLeg) {
+                            Icon(Icons.Default.Close, contentDescription = "일정 삭제", tint = Color(0xFFDC2626))
+                        }
+                    }
                 }
             }
 
