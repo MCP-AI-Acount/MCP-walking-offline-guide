@@ -1,0 +1,53 @@
+{
+  "id": "italy-offline-guide-bundle-v2",
+  "apk_target_mb": 4096,
+  "notes": "유저 승인 — 용량 상한 해제 · HR/SI/IT 전국 타일",
+  "alloc_mb": {
+    "app_skeleton": 25,
+    "poi_json": 200,
+    "photos": 420,
+    "tiles": 3500
+  },
+  "poi": {
+    "max_pois": 5000,
+    "max_json_bytes": 209715200,
+    "description_max_chars": 2000,
+    "include_hotels": true,
+    "hotel_max": 800,
+    "restaurant_max": 600
+  },
+  "photos": {
+    "max_total_bytes": 440401920,
+    "max_count": 2000,
+    "max_edge_px": 420,
+    "max_file_bytes": 131072,
+    "skip_kinds": ["festival", "information", "artwork"],
+    "skip_tourism": ["information", "artwork"]
+  },
+  "tiles": {
+    "max_total_bytes": 0,
+    "max_count": 0,
+    "default_zooms": [10, 11, 12, 13],
+    "dolomiti_radius_km": 100,
+    "dolomiti_zooms": [10, 11, 12, 13, 14],
+    "country_zooms": [9, 10, 11, 12, 13],
+    "slovenia_zooms": [9, 10, 11, 12, 13],
+    "source": {
+      "id": "carto-voyager-2x",
+      "url_template": "https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}@2x.png",
+      "subdomains": ["a", "b", "c", "d"],
+      "user_agent": "MCP-italy-offline-guide/1.1 (offline; build-time only)",
+      "attribution": "© OpenStreetMap contributors © CARTO",
+      "min_tile_bytes": 8000,
+      "blocked_md5": "c069a15b2cc2d6b6f527ad09eb93c61a"
+    },
+    "test_gps": {
+      "label_ko": "송파 방이시장",
+      "lat": 37.5122,
+      "lon": 127.1078,
+      "radius_km": 1,
+      "zooms": [15, 16],
+      "note": "한국 현지 GPS·지도 판 이동 테스트 — 앱 POI 본문과 무관"
+    }
+  }
+}

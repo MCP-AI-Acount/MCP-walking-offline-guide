@@ -1,0 +1,58 @@
+[
+  {
+    "id": "festival/venezia-carnevale",
+    "kind": "festival",
+    "name": "Carnevale di Venezia",
+    "name_ko": "베네치아 카니발",
+    "lat": 45.434,
+    "lon": 12.338,
+    "description_ko": "베네치아의 대표 마스크 축제. 산 마르코 광장과 운하 곳곳에서 퍼레이드와 가면 행사가 열립니다.",
+    "schedule": {
+      "annual_start": "02-01",
+      "annual_end": "02-15",
+      "weekdays": [0, 1, 2, 3, 4, 5, 6]
+    }
+  },
+  {
+    "id": "festival/verona-opera",
+    "kind": "festival",
+    "name": "Arena di Verona Opera Festival",
+    "name_ko": "베로나 아레나 오페라 페스티벌",
+    "lat": 45.439,
+    "lon": 10.994,
+    "description_ko": "로마 시대 원형극장에서 여름 밤 야외 오페라 공연이 열리는 유명 음악 축제입니다.",
+    "schedule": {
+      "annual_start": "06-15",
+      "annual_end": "09-05",
+      "weekdays": [4, 5, 6]
+    }
+  },
+  {
+    "id": "festival/marostica-scacchi",
+    "kind": "festival",
+    "name": "Partita a scacchi di Marostica",
+    "name_ko": "마로스티카 인간 체스 축제",
+    "lat": 45.747,
+    "lon": 11.655,
+    "description_ko": "짝수 년 가을, 광장에서 사람들이 체스 말이 되어 재연하는 독특한 중세 테마 축제입니다.",
+    "schedule": {
+      "annual_start": "09-01",
+      "annual_end": "09-30",
+      "weekdays": [5, 6]
+    }
+  },
+  {
+    "id": "festival/cortina-film",
+    "kind": "festival",
+    "name": "Cortina Winter Events",
+    "name_ko": "코르티나 겨울 스포츠·문화 행사",
+    "lat": 46.536,
+    "lon": 12.135,
+    "description_ko": "코르티나 담pezzo 일대에서 겨울 시즌 스키·알프스 문화 행사가 집중됩니다.",
+    "schedule": {
+      "annual_start": "12-15",
+      "annual_end": "03-15",
+      "weekdays": [5, 6]
+    }
+  }
+]

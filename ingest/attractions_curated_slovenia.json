@@ -1,0 +1,32 @@
+[
+  {
+    "id": "curated/ljubljana-castle",
+    "kind": "attraction",
+    "name_ko": "류블랴나 성",
+    "lat": 46.049,
+    "lon": 14.508,
+    "description_ko": "수도 류블랴나를 한눈에 내려다보는 언덕 위의 중세 성.",
+    "tourism": "attraction",
+    "rating": 4.7
+  },
+  {
+    "id": "curated/lake-bled",
+    "kind": "attraction",
+    "name_ko": "블레드 호수",
+    "lat": 46.368,
+    "lon": 14.114,
+    "description_ko": "섬과 교회가 있는 알프스 호수. 슬로베니아 대표 풍경.",
+    "tourism": "attraction",
+    "rating": 4.9
+  },
+  {
+    "id": "curated/postojna-cave",
+    "kind": "attraction",
+    "name_ko": "포스토이나 동굴",
+    "lat": 45.781,
+    "lon": 14.203,
+    "description_ko": "유럽 최대 규모의 카르스트 동굴 중 하나. 전동차 투어.",
+    "tourism": "attraction",
+    "rating": 4.8
+  }
+]

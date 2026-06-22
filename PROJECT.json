@@ -1,0 +1,32 @@
+{
+  "id": "walking-offline-guide",
+  "title": "도보 여행 어플 (오프라인)",
+  "status": "active",
+  "implementation_root": "android",
+  "description": "범용 도보 여행 오프라인 가이드 · WiFi에서 지역 다운로드 · 세계지도 허브 · POI·도보 경로 · 사진 없음.",
+  "region_v1": "generic",
+  "runtime": "mobile-android",
+  "stack": "kotlin-compose",
+  "planning_spec": "01_Planning_Specification.md",
+  "gate": "oracle_fork",
+  "fork_from": "italy-offline-guide",
+  "pipelines": [
+    {
+      "id": "app_android",
+      "runtime": "kotlin-native",
+      "entry": "EXE/run_walking_guide_apk.sh",
+      "requires": "planning_spec_confirmed"
+    }
+  ],
+  "constraints": [
+    "여행국 런타임 오프라인 다운로드(WiFi 권장)",
+    "사진 없음",
+    "세로 고정 UI"
+  ],
+  "success_criteria": [
+    "Android APK 설치·기동",
+    "로딩 WiFi 경고 → 세계지도 허브",
+    "스케줄 설정 → 다운로드 → 맵 화면",
+    "bash EXE/run_walking_guide_apk.sh → debug APK"
+  ]
+}

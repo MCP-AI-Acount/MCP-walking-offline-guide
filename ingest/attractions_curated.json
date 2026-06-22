@@ -1,0 +1,102 @@
+[
+  {
+    "id": "curated/tre-cime",
+    "kind": "attraction",
+    "name_ko": "트레 치미 디 라바레드",
+    "lat": 46.618,
+    "lon": 12.302,
+    "tourism": "viewpoint",
+    "description_ko": "돌로미티를 대표하는 세 봉우리(라바레드, 피카, 웨스트)로 이루어진 명소입니다. 알프스 하이킹·일출·암벽 등반으로 유명하며, 주차장에서 각 복장까지 3~4시간 코스가 있습니다. 가을 단풍과 겨울 설경이 특히 아름답습니다.",
+    "photo_commons": "Tre Cime di Lavaredo 2.jpg"
+  },
+  {
+    "id": "curated/lago-braies",
+    "kind": "attraction",
+    "name_ko": "브라이에스 호수",
+    "lat": 46.694,
+    "lon": 12.085,
+    "tourism": "attraction",
+    "description_ko": "에메랄드빛 산악 호수로 SNS에서도 자주 보이는 돌로미티의 상징입니다. 호수 둘레 산책로(약 1시간)와 보트 대여가 가능합니다. 성수기에는 오전 일찍 방문하는 것이 좋습니다.",
+    "photo_commons": "Pragser Wildsee.jpg"
+  },
+  {
+    "id": "curated/san-marco",
+    "kind": "attraction",
+    "name_ko": "산 마르코 광장",
+    "lat": 45.434,
+    "lon": 12.339,
+    "tourism": "attraction",
+    "description_ko": "베네치아의 중심 광장으로, 성 마르코 대성당·종탑·총독궁이 둘러싸고 있습니다. 비둘기와 카페 테라스, 거리 연주가 어우러지는 베네치아 최고의 만남의 장소입니다.",
+    "photo_commons": "Piazza San Marco Venice.jpg"
+  },
+  {
+    "id": "curated/rialto",
+    "kind": "attraction",
+    "name_ko": "리알토 다리",
+    "lat": 45.438,
+    "lon": 12.336,
+    "tourism": "attraction",
+    "description_ko": "그란데 운하 위 최초의 석조 다리로, 양쪽에 기념품·금은방·리알토 시장이 있습니다. 곤돌라와 수상버스가 오가는 풍경이 베네치아의 정수입니다.",
+    "photo_commons": "Venice - Rialto bridge.jpg"
+  },
+  {
+    "id": "curated/murano",
+    "kind": "attraction",
+    "name_ko": "무라노 섬",
+    "lat": 45.458,
+    "lon": 12.356,
+    "tourism": "attraction",
+    "description_ko": "베네치아 북쪽 섬으로, 수 세기 전통의 유리 공예(무라노 글라스)로 유명합니다. 공방 시연·유리박물관·수공예 쇼핑을 즐길 수 있습니다.",
+    "photo_commons": "Murano glassware.jpg"
+  },
+  {
+    "id": "curated/burano",
+    "kind": "attraction",
+    "name_ko": "부라노 섬",
+    "lat": 45.528,
+    "lon": 12.417,
+    "tourism": "attraction",
+    "description_ko": "알록달록한 집과 레이스 공예로 유명한 어촌 섬입니다. 사진 명소로 인기가 많으며, 현지 해산물 레스토랑도 많습니다.",
+    "photo_commons": "Burano - houses.jpg"
+  },
+  {
+    "id": "curated/doge-palace",
+    "kind": "attraction",
+    "name_ko": "도제 궁전",
+    "lat": 45.434,
+    "lon": 12.34,
+    "tourism": "museum",
+    "description_ko": "베네치아 공화국 총독의 거주지였던 화려한 고딕 궁전입니다. 탄탑대교·황금계단·대회의실 등을 관람할 수 있으며, 산 마르코 대성당과 연계 관람이 일반적입니다.",
+    "photo_commons": "Palazzo Ducale.jpg"
+  },
+  {
+    "id": "curated/sesto-gardena",
+    "kind": "attraction",
+    "name_ko": "세스토·발 가르데나",
+    "lat": 46.556,
+    "lon": 11.735,
+    "tourism": "attraction",
+    "description_ko": "알프스 스키·하이킹 리조트 마을로, 돌로미티 슈퍼스키(셀라 론다)의 거점 중 하나입니다. 라덴·이탈리아어가 혼용되는 라디노 계곡의 중심입니다.",
+    "photo_commons": "Sella group Dolomites.jpg"
+  },
+  {
+    "id": "curated/cortina",
+    "kind": "attraction",
+    "name_ko": "코르티나담페초",
+    "lat": 46.536,
+    "lon": 12.135,
+    "tourism": "attraction",
+    "description_ko": "1956년 동계 올림픽 개최지로 유명한 알프스 휴양지입니다. 겨울 스키·여름 트레킹·고급 쇼핑과 미슐랭 레스토랑이 밀집해 있습니다.",
+    "photo_commons": "Cortina d'Ampezzo town.jpg"
+  },
+  {
+    "id": "curated/verona-arena",
+    "kind": "attraction",
+    "name_ko": "베로나 아레나",
+    "lat": 45.439,
+    "lon": 10.994,
+    "tourism": "attraction",
+    "description_ko": "로마 시대 원형극장(1세기)으로, 여름철 야외 오페라 페스티벌의 무대로 사용됩니다. 로미오와 줄리엣의 무대인 베로나 구시가와 함께 방문하기 좋습니다.",
+    "photo_commons": "Arena di Verona.jpg"
+  }
+]

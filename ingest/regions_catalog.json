@@ -1,0 +1,38 @@
+{
+  "primary": {
+    "file": "dolomiti_venezia_bbox.json",
+    "poi_key": "pois",
+    "bbox_key": "bbox",
+    "label_key": "label_ko",
+    "max_pois": 2500,
+    "curated_attr": "attractions_curated.json",
+    "curated_fest": "festivals_curated.json"
+  },
+  "extra": [
+    {
+      "file": "croatia_bbox.json",
+      "poi_key": "croatia_pois",
+      "bbox_key": "croatia_bbox",
+      "label_key": "croatia_label_ko",
+      "count_key": "croatia_count",
+      "max_pois": 1200,
+      "restaurant_max": 200,
+      "hotel_max": 200
+    },
+    {
+      "file": "slovenia_bbox.json",
+      "poi_key": "slovenia_pois",
+      "bbox_key": "slovenia_bbox",
+      "label_key": "slovenia_label_ko",
+      "count_key": "slovenia_count",
+      "max_pois": 800,
+      "restaurant_max": 150,
+      "hotel_max": 120
+    }
+  ],
+  "routing_assets": {
+    "italy": "routing_graph_italy.json",
+    "croatia": "routing_graph_croatia.json",
+    "slovenia": "routing_graph_slovenia.json"
+  }
+}

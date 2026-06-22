@@ -1,0 +1,32 @@
+[
+  {
+    "id": "curated/dubrovnik-walls",
+    "kind": "attraction",
+    "name_ko": "두브로브니크 구시가",
+    "lat": 42.6507,
+    "lon": 18.0944,
+    "description_ko": "아드리아해를 내려다보는 중세 성벽 도시. 크로아티아 대표 관광지.",
+    "tourism": "attraction",
+    "rating": 4.9
+  },
+  {
+    "id": "curated/plitvice",
+    "kind": "attraction",
+    "name_ko": "플리트비체 국립공원",
+    "lat": 44.8654,
+    "lon": 15.582,
+    "description_ko": "16개의 계단식 호수와 폭포가 이어지는 유네스코 자연유산.",
+    "tourism": "attraction",
+    "rating": 4.9
+  },
+  {
+    "id": "curated/zagreb-upper",
+    "kind": "attraction",
+    "name_ko": "자그레브 상부 도시",
+    "lat": 45.816,
+    "lon": 15.973,
+    "description_ko": "수도 자그레브의 역사 중심. 성 마르코 교회와 좁은 골목.",
+    "tourism": "attraction",
+    "rating": 4.6
+  }
+]
