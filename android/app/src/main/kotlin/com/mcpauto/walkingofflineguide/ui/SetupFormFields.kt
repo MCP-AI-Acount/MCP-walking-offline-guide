@@ -5,7 +5,10 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Close
@@ -30,7 +33,6 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.mcpauto.walkingofflineguide.data.CityPoint
-import com.mcpauto.walkingofflineguide.data.CountryEntry
 import com.mcpauto.walkingofflineguide.data.GeoCatalog
 import com.mcpauto.walkingofflineguide.data.ScheduleLeg
 import com.mcpauto.walkingofflineguide.network.NominatimGeocoder
@@ -49,13 +51,13 @@ fun formatDateDigitsInput(raw: String): String {
 fun DateMaskField(
     value: String,
     onValueChange: (String) -> Unit,
-    label: String,
     modifier: Modifier = Modifier,
 ) {
     OutlinedTextField(
         value = value,
         onValueChange = { onValueChange(formatDateDigitsInput(it)) },
-        label = { Text("$label (20260625 → 2026-06-25)") },
+        label = { Text("시작일") },
+        placeholder = { Text("2026-06-25") },
         modifier = modifier.fillMaxWidth(),
         singleLine = true,
     )
@@ -72,7 +74,7 @@ fun CountryAutocompleteField(
     var expanded by remember { mutableStateOf(false) }
     val suggestions = remember(value) { catalog.searchCountries(value) }
 
-    Column(modifier) {
+    Column(modifier.fillMaxWidth()) {
         OutlinedTextField(
             value = value,
             onValueChange = {
@@ -85,21 +87,26 @@ fun CountryAutocompleteField(
         )
         if (expanded && suggestions.isNotEmpty()) {
             Card(
-                modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(top = 4.dp)
+                    .heightIn(max = 160.dp),
                 colors = CardDefaults.cardColors(containerColor = Color(0xFFF8FAFC)),
             ) {
-                suggestions.forEach { c ->
-                    Text(
-                        "${c.nameKo} (${c.nameEn})",
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clickable {
-                                onValueChange(c.nameKo.ifBlank { c.nameEn })
-                                expanded = false
-                            }
-                            .padding(12.dp),
-                        style = MaterialTheme.typography.bodyMedium,
-                    )
+                Column(Modifier.verticalScroll(rememberScrollState())) {
+                    suggestions.forEach { c ->
+                        Text(
+                            "${c.nameKo} (${c.nameEn})",
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable {
+                                    onValueChange(c.nameKo.ifBlank { c.nameEn })
+                                    expanded = false
+                                }
+                                .padding(horizontal = 12.dp, vertical = 10.dp),
+                            style = MaterialTheme.typography.bodyMedium,
+                        )
+                    }
                 }
             }
         }
@@ -120,25 +127,54 @@ fun CityConfirmField(
     var draft by remember(point.name, point.confirmed) { mutableStateOf(point.name) }
     var confirming by remember { mutableStateOf(false) }
     var err by remember { mutableStateOf("") }
-    val suggestions = remember(draft, countryHint) {
-        if (point.confirmed) emptyList() else catalog.searchCities(draft, countryHint)
+    val suggestions = remember(draft, countryHint, point.confirmed) {
+        if (point.confirmed || draft.length < 1) emptyList() else catalog.searchCities(draft, countryHint)
     }
 
-    Column(Modifier.fillMaxWidth().padding(vertical = 4.dp)) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            OutlinedTextField(
-                value = if (point.confirmed) "✓ ${point.name}" else draft,
-                onValueChange = {
-                    if (!point.confirmed) {
-                        draft = it
-                        onDraftChange(it)
-                    }
-                },
-                label = { Text(label) },
-                modifier = Modifier.weight(1f),
-                readOnly = point.confirmed,
-                singleLine = true,
-            )
+    Column(Modifier.fillMaxWidth().padding(vertical = 6.dp)) {
+        OutlinedTextField(
+            value = if (point.confirmed) point.name else draft,
+            onValueChange = {
+                if (!point.confirmed) {
+                    draft = it
+                    onDraftChange(it)
+                }
+            },
+            label = { Text(if (point.confirmed) "✓ $label" else label) },
+            modifier = Modifier.fillMaxWidth(),
+            readOnly = point.confirmed,
+            singleLine = true,
+        )
+
+        if (!point.confirmed && suggestions.isNotEmpty()) {
+            Column(
+                Modifier
+                    .fillMaxWidth()
+                    .padding(top = 4.dp)
+                    .heightIn(max = 120.dp)
+                    .verticalScroll(rememberScrollState()),
+            ) {
+                suggestions.take(8).forEach { c ->
+                    Text(
+                        "${c.name} · ${c.country}",
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable {
+                                draft = c.name
+                                onDraftChange(c.name)
+                            }
+                            .padding(vertical = 6.dp, horizontal = 4.dp),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = Color(0xFF2563EB),
+                    )
+                }
+            }
+        }
+
+        Row(
+            Modifier.fillMaxWidth().padding(top = 6.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
             if (!point.confirmed) {
                 Button(
                     onClick = {
@@ -147,7 +183,7 @@ fun CityConfirmField(
                             err = ""
                             val name = draft.trim()
                             if (name.isBlank()) {
-                                err = "도시명 입력"
+                                err = "도시명을 입력해 주세요"
                                 confirming = false
                                 return@launch
                             }
@@ -168,31 +204,18 @@ fun CityConfirmField(
                         }
                     },
                     enabled = !confirming,
-                    modifier = Modifier.padding(start = 8.dp),
-                ) { Text(if (confirming) "…" else "확인") }
+                    modifier = Modifier.weight(1f),
+                ) { Text(if (confirming) "확인 중…" else "확인") }
             } else {
                 OutlinedButton(
                     onClick = { onConfirm(CityPoint()) },
-                    modifier = Modifier.padding(start = 8.dp),
+                    modifier = Modifier.weight(1f),
                 ) { Text("수정") }
             }
         }
-        if (!point.confirmed && suggestions.isNotEmpty()) {
-            suggestions.take(6).forEach { c ->
-                Text(
-                    "  · ${c.name} (${c.country})",
-                    modifier = Modifier
-                        .clickable {
-                            draft = c.name
-                            onDraftChange(c.name)
-                        }
-                        .padding(start = 8.dp, top = 2.dp),
-                    style = MaterialTheme.typography.bodySmall,
-                    color = Color(0xFF2563EB),
-                )
-            }
+        if (err.isNotBlank()) {
+            Text(err, color = Color(0xFFDC2626), style = MaterialTheme.typography.labelSmall)
         }
-        if (err.isNotBlank()) Text(err, color = Color.Red, style = MaterialTheme.typography.labelSmall)
     }
 }
 
@@ -206,12 +229,12 @@ fun LegRouteEditor(
     onLegChange: (ScheduleLeg) -> Unit,
 ) {
     Card(
-        modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp),
+        modifier = Modifier.fillMaxWidth().padding(vertical = 6.dp),
         colors = CardDefaults.cardColors(
-            containerColor = if (leg.legConfirmed) Color(0xFFEFF6FF) else Color.White,
+            containerColor = if (leg.legConfirmed) Color(0xFFEFF6FF) else Color(0xFFFAFAFA),
         ),
     ) {
-        Column(Modifier.padding(12.dp)) {
+        Column(Modifier.padding(horizontal = 12.dp, vertical = 10.dp)) {
             Row(
                 Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
@@ -219,7 +242,7 @@ fun LegRouteEditor(
             ) {
                 Text("일정 ${legIndex + 1}", fontWeight = FontWeight.Bold)
                 if (leg.legConfirmed) {
-                    Text("✓ 확정", color = Color(0xFF15803D), style = MaterialTheme.typography.labelMedium)
+                    Text("확정됨", color = Color(0xFF15803D), style = MaterialTheme.typography.labelMedium)
                 }
             }
 
@@ -234,9 +257,14 @@ fun LegRouteEditor(
             )
 
             leg.waypoints.forEachIndexed { wi, wp ->
-                Row(verticalAlignment = Alignment.Top) {
+                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.Top) {
                     Column(Modifier.weight(1f)) {
-                        Text("↳ 경유 ${wi + 1}", style = MaterialTheme.typography.labelSmall, color = Color.Gray)
+                        Text(
+                            "경유 ${wi + 1}",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = Color.Gray,
+                            modifier = Modifier.padding(top = 4.dp),
+                        )
                         CityConfirmField(
                             point = wp,
                             onDraftChange = {},
@@ -251,9 +279,17 @@ fun LegRouteEditor(
                             label = "경유지",
                         )
                     }
-                    IconButton(onClick = {
-                        onLegChange(leg.copy(waypoints = leg.waypoints.filterIndexed { i, _ -> i != wi }, legConfirmed = false))
-                    }) {
+                    IconButton(
+                        onClick = {
+                            onLegChange(
+                                leg.copy(
+                                    waypoints = leg.waypoints.filterIndexed { i, _ -> i != wi },
+                                    legConfirmed = false,
+                                ),
+                            )
+                        },
+                        modifier = Modifier.padding(top = 24.dp),
+                    ) {
                         Icon(Icons.Default.Close, contentDescription = "경유지 삭제")
                     }
                 }
@@ -263,10 +299,10 @@ fun LegRouteEditor(
                 onClick = {
                     onLegChange(leg.copy(waypoints = leg.waypoints + CityPoint(), legConfirmed = false))
                 },
-                modifier = Modifier.padding(vertical = 4.dp),
+                modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
             ) {
-                Icon(Icons.Default.Add, null)
-                Text("  경유지 추가", modifier = Modifier.padding(start = 4.dp))
+                Icon(Icons.Default.Add, contentDescription = null)
+                Text("경유지 추가", modifier = Modifier.padding(start = 6.dp))
             }
 
             CityConfirmField(
@@ -277,12 +313,6 @@ fun LegRouteEditor(
                 geocoder = geocoder,
                 countryHint = countryHint,
                 label = "도보 도착지",
-            )
-
-            Text(
-                "출발 → 경유 → 도착 순으로 확인 버튼을 눌러 주세요.",
-                style = MaterialTheme.typography.labelSmall,
-                color = Color.Gray,
             )
         }
     }

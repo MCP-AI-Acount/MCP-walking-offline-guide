@@ -392,13 +392,7 @@ private fun SetupFlowScreen(
     var tripStart by remember {
         mutableStateOf(
             if (initial.tripStartEpochDay > 0) PoiLogic.formatDate(initial.tripStartEpochDay)
-            else formatDateDigitsInput(LocalDate.now().toString().replace("-", "")),
-        )
-    }
-    var tripEnd by remember {
-        mutableStateOf(
-            if (initial.tripEndEpochDay > 0) PoiLogic.formatDate(initial.tripEndEpochDay)
-            else formatDateDigitsInput(LocalDate.now().plusDays(7).toString().replace("-", "")),
+            else PoiLogic.formatDate(LocalDate.now().toEpochDay()),
         )
     }
     var showHotel by remember { mutableStateOf(initial.showHotel) }
@@ -469,10 +463,9 @@ private fun SetupFlowScreen(
                         Text("선택: ${c.nameKo} · 수도 ${c.capital}", style = MaterialTheme.typography.labelSmall, color = Color.Gray)
                     }
                 }
-                DateMaskField(tripStart, { tripStart = it; scheduleLocked = false }, "시작일")
-                DateMaskField(tripEnd, { tripEnd = it; scheduleLocked = false }, "종료일")
+                DateMaskField(tripStart, { tripStart = it; scheduleLocked = false })
                 Text(
-                    "일정을 나눠 추가하시면 다운로드가 더 정확해집니다.\n하루에 여러 도시·한 도시에 며칠 — 모두 가능합니다.",
+                    "일정을 나눠 추가하시면 다운로드가 더 정확해집니다.",
                     style = MaterialTheme.typography.bodySmall,
                     color = Color.Gray,
                     modifier = Modifier.padding(vertical = 8.dp),
@@ -564,11 +557,12 @@ private fun SetupFlowScreen(
                                 }
                                 try {
                                     downloader.downloadLeg(destCountry, stops) { downloadProgress = it }
+                                    val startDay = PoiLogic.parseDate(tripStart).toEpochDay()
                                     val updated = TripConfig(
                                         homeCountry = homeCountry,
                                         destinationCountry = destCountry,
-                                        tripStartEpochDay = PoiLogic.parseDate(tripStart).toEpochDay(),
-                                        tripEndEpochDay = PoiLogic.parseDate(tripEnd).toEpochDay(),
+                                        tripStartEpochDay = startDay,
+                                        tripEndEpochDay = startDay + 30,
                                         legs = legs.toList(),
                                         showHotel = showHotel,
                                         showRestaurant = showRestaurant,
