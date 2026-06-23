@@ -69,8 +69,8 @@ class NominatimGeocoder {
     suspend fun search(cityQuery: String, countryHint: String = ""): GeoResult? =
         searchSuggestions(cityQuery, countryHint, limit = 1).firstOrNull()
 
-    suspend fun reverse(lat: Double, lon: Double): GeoResult? = withContext(Dispatchers.IO) {
-        val url = "https://nominatim.openstreetmap.org/reverse?lat=$lat&lon=$lon&format=json&addressdetails=1&zoom=16&accept-language=ko,en"
+    suspend fun reverse(lat: Double, lon: Double, language: String = "ko,en"): GeoResult? = withContext(Dispatchers.IO) {
+        val url = "https://nominatim.openstreetmap.org/reverse?lat=$lat&lon=$lon&format=json&addressdetails=1&zoom=16&accept-language=$language"
         val req = Request.Builder()
             .url(url)
             .header("User-Agent", "WalkingOfflineGuide/1.0 (Android)")

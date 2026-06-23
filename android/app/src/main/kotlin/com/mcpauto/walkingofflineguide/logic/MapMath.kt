@@ -145,12 +145,13 @@ object MapMath {
     ): Bbox? = resolveDistantTileClipBbox(config, region, gpsLat, gpsLon)
 
     /** 레이더 POI 반경(m) — 0=OFF · 탭마다 순환 */
-    val RADAR_RADIUS_STEPS_M = listOf(0, 100, 200, 500, 1000)
+    const val DEFAULT_RADAR_RADIUS_M = 400
+    val RADAR_RADIUS_STEPS_M = listOf(0, 200, 400, 500, 1000)
 
     fun nextRadarRadiusM(currentM: Int): Int {
         val idx = RADAR_RADIUS_STEPS_M.indexOf(currentM)
         return if (idx < 0) {
-            RADAR_RADIUS_STEPS_M.first()
+            DEFAULT_RADAR_RADIUS_M
         } else {
             RADAR_RADIUS_STEPS_M[(idx + 1) % RADAR_RADIUS_STEPS_M.size]
         }

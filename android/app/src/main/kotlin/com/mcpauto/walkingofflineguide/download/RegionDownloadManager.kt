@@ -85,7 +85,7 @@ class RegionDownloadManager(
             if (stop.lat == 0.0 && stop.lon == 0.0) {
                 tiles += 80
             } else {
-                val bb = PoiLogic.bboxAround(stop.lat, stop.lon, stop.radiusKm)
+                val bb = stopBbox(stop)
                 zooms.forEach { z ->
                     val xr = MapMath.tileXRange(bb, z)
                     val yr = MapMath.tileYRange(bb, z)
@@ -192,6 +192,14 @@ class RegionDownloadManager(
 
         for (geo in resolved) {
             if (cancelled) throw CancellationException("download paused")
+            val localRegion = findLocalRegionForStop(geo)
+            if (localRegion != null) {
+                finished += geo.name
+                results += localRegion
+                job = job.copy(finishedCityNames = finished.toList())
+                store.saveDownloadJob(job)
+                continue
+            }
             val existing = store.findRegionIdForCity(geo.name)
             val existingRecord = store.loadRegions().find { it.id == existing }
             if (existingRecord?.downloadComplete == true) {
@@ -203,7 +211,7 @@ class RegionDownloadManager(
             }
 
             val id = store.stableRegionId(geo.name, existing)
-            val bbox = PoiLogic.bboxAround(geo.lat, geo.lon, geo.radiusKm)
+            val bbox = stopBbox(geo)
             var record = existingRecord ?: RegionRecord(
                 id = id,
                 cityName = geo.name,
@@ -215,6 +223,18 @@ class RegionDownloadManager(
             )
             val dir = store.regionDir(id)
             store.saveRegion(record)
+
+            if (hasLocalTilePayload(dir)) {
+                val bytes = tileBytesOnDisk(dir)
+                record = record.copy(downloadBytes = bytes, downloadComplete = true)
+                store.saveRegion(record)
+                results += record
+                finished += geo.name
+                job = job.copy(finishedCityNames = finished.toList())
+                store.saveDownloadJob(job)
+                onProgress(DownloadProgress(id, geo.name, globalDone, totalEstimate, "완료", 100, phaseDetail = "기존 지도 사용"))
+                continue
+            }
 
             if (!File(dir, "description.txt").exists()) {
                 onProgress(
@@ -326,9 +346,16 @@ class RegionDownloadManager(
         onPartial: (bytes: Long, tilesDone: Int, tilesTotal: Int) -> Unit,
     ): Triple<Long, Int, Int> = withContext(Dispatchers.IO) {
         val tilesRoot = File(regionDir, "tiles").also { it.mkdirs() }
+        val tilesTotal = countTilesInBbox(bbox)
+        if (outZip.exists() && outZip.length() >= MIN_TILE_ZIP_BYTES) {
+            val bytes = outZip.length()
+            val count = tilesRoot.walkTopDown().count { it.isFile && it.extension == "png" && it.length() > 8000 }
+                .coerceAtLeast(1)
+            onPartial(bytes, count, tilesTotal)
+            return@withContext Triple(bytes, count, tilesTotal)
+        }
         val progressFile = File(regionDir, "tiles_progress.json")
         val doneKeys = loadTileProgress(progressFile)
-        val tilesTotal = countTilesInBbox(bbox)
         var bytes = tilesRoot.walkTopDown().filter { it.isFile && it.extension == "png" }.sumOf { it.length() }
         var count = doneKeys.size
         onPartial(bytes, count, tilesTotal)
@@ -384,10 +411,72 @@ class RegionDownloadManager(
         SafeStorage.atomicWriteText(file, json.encodeToString(keys.toList()))
     }
 
+    /** 가져오기·기존 폴더 등 — 모든 stop에 로컬 타일이 있으면 새 다운로드 불필요 */
+    suspend fun allStopsHaveLocalMaps(stops: List<CityStop>): Boolean = withContext(Dispatchers.IO) {
+        if (stops.isEmpty()) return@withContext false
+        stops.all { findLocalRegionForStop(it) != null }
+    }
+
+    private suspend fun findLocalRegionForStop(stop: CityStop): RegionRecord? {
+        val regions = store.loadRegions()
+        regions.firstOrNull {
+            it.cityName.equals(stop.name, ignoreCase = true) && hasLocalTilePayload(store.regionDir(it.id))
+        }?.let { return it }
+        val stopBox = stopBbox(stop)
+        return regions.firstOrNull { region ->
+            hasLocalTilePayload(store.regionDir(region.id)) && stopCoveredByRegion(stop, stopBox, region)
+        }
+    }
+
+    private fun stopCoveredByRegion(stop: CityStop, stopBox: Bbox, region: RegionRecord): Boolean {
+        if (stop.lat != 0.0 && stop.lon != 0.0 && region.lat != 0.0 && region.lon != 0.0) {
+            val maxM = (stop.radiusKm.coerceAtLeast(1.0) * 1000.0 * 1.2).coerceAtMost(50_000.0)
+            if (PoiLogic.haversineM(stop.lat, stop.lon, region.lat, region.lon) <= maxM) return true
+        }
+        if (region.bbox.north > region.bbox.south && stopBox.north > stopBox.south) {
+            if (bboxesOverlap(region.bbox, stopBox)) return true
+            if (stop.lat in region.bbox.south..region.bbox.north &&
+                stop.lon in region.bbox.west..region.bbox.east
+            ) {
+                return true
+            }
+        }
+        return false
+    }
+
+    private fun bboxesOverlap(a: Bbox, b: Bbox): Boolean =
+        a.west < b.east && a.east > b.west && a.south < b.north && a.north > b.south
+
     companion object {
+        private const val MIN_TILE_ZIP_BYTES = 50_000L
+        private const val MIN_TILE_PNG_BYTES = 8_000L
+        private const val MIN_TILE_PNG_COUNT = 8
+
+        fun hasLocalTilePayload(regionDir: File): Boolean {
+            val zip = File(regionDir, "tiles.zip")
+            if (zip.exists() && zip.length() >= MIN_TILE_ZIP_BYTES) return true
+            val tiles = File(regionDir, "tiles")
+            if (!tiles.isDirectory) return false
+            val count = tiles.walkTopDown().count { f ->
+                f.isFile && f.extension == "png" && f.length() > MIN_TILE_PNG_BYTES
+            }
+            return count >= MIN_TILE_PNG_COUNT
+        }
+
+        fun tileBytesOnDisk(regionDir: File): Long {
+            val zip = File(regionDir, "tiles.zip")
+            if (zip.exists()) return zip.length()
+            val tiles = File(regionDir, "tiles")
+            if (!tiles.isDirectory) return 0L
+            return tiles.walkTopDown().filter { it.isFile }.sumOf { it.length() }
+        }
+
         private val SUBS = listOf("a", "b", "c", "d")
         val TILE_ZOOMS = listOf(10, 11, 12, 13, 14, 15, 16, 17, 18)
         val ONLINE_ZOOMS = setOf(10, 11, 12, 13, 14, 15, 16, 17, 18)
+
+        fun stopBbox(stop: CityStop): Bbox =
+            stop.customBbox ?: PoiLogic.bboxAround(stop.lat, stop.lon, stop.radiusKm)
 
         fun formatSize(bytes: Long): String = when {
             bytes <= 0 -> "0MB"

@@ -9,3 +9,5 @@ android/app/build/
 android/local.properties
 *.iml
 .idea/
+offline-bundles/
+.cursor/

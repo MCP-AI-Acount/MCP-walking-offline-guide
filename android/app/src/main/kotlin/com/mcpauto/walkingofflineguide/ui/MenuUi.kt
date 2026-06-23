@@ -1,8 +1,10 @@
 package com.mcpauto.walkingofflineguide.ui
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.PaddingValues
@@ -36,18 +38,30 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 
 object AppMenuStyle {
-    val bg = Color(0xFFF4F6F8)
-    val card = Color.White
-    val text = Color(0xFF1E293B)
-    val muted = Color(0xFF64748B)
+    /** 페이지 바탕 — 따뜻한 크림 */
+    val bg = Color(0xFFF3EEE3)
+    /** 패널·카드 — 연한 노랑 */
+    val card = Color(0xFFFFF6DC)
+    val panel = card
+    val panelBorder = Color(0xFFE8DCB8)
+    /** 스크롤 가능한 안쪽 — 연한 올리브 */
+    val scroll = Color(0xFFE9EFE0)
+    val scrollBorder = Color(0xFFD5DFC8)
+    /** 여행설정 1 상단 — 입국·출국·귀국 레이어 */
+    val tripOverviewBg = Color(0xFFFFF0E0)
+    val tripOverviewBorder = Color(0xFFE8A855)
+    val text = Color(0xFF3D3929)
+    val muted = Color(0xFF6B6560)
     val accent = Color(0xFF2563EB)
+    val purple = Color(0xFF6366F1)
     val danger = Color(0xFFDC2626)
-    val warnBg = Color(0xFFFFF7ED)
+    val warnBg = Color(0xFFFFF3D6)
     val warnText = Color(0xFF9A3412)
-    /** 상태바 뒤 짙은 파랑 50% */
-    val statusBarScrim = Color(0x801A365D)
+    /** 상태바 뒤 짙은 올리브 50% */
+    val statusBarScrim = Color(0x804A5240)
 }
 
 /** 시스템 상태바(시간·배터리) 뒤 반투명 바 — 모든 화면 공통 */
@@ -64,6 +78,7 @@ fun StatusBarScrim(modifier: Modifier = Modifier) {
 @Composable
 fun AppMenuScaffold(
     title: String,
+    titleSubtitle: String? = null,
     onBack: (() -> Unit)? = null,
     onOptions: (() -> Unit)? = null,
     actionLabel: String? = null,
@@ -93,18 +108,29 @@ fun AppMenuScaffold(
                 } else if (onOptions == null) {
                     androidx.compose.foundation.layout.Spacer(Modifier.width(8.dp))
                 }
-                Text(
-                    title,
-                    style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.Bold,
-                    color = AppMenuStyle.text,
-                    modifier = Modifier.weight(1f),
-                    textAlign = if (onBack == null && onOptions == null && actionLabel == null) {
-                        TextAlign.Center
-                    } else {
-                        TextAlign.Start
-                    },
-                )
+                Row(
+                    Modifier.weight(1f),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(
+                        title,
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold,
+                        color = AppMenuStyle.text,
+                        maxLines = 1,
+                    )
+                    if (titleSubtitle != null) {
+                        Text(
+                            " · $titleSubtitle",
+                            style = MaterialTheme.typography.titleMedium.copy(
+                                fontSize = 10.sp,
+                                fontWeight = FontWeight.Normal,
+                            ),
+                            color = Color(0xFF94A3B8),
+                            maxLines = 1,
+                        )
+                    }
+                }
                 if (actionLabel != null && onAction != null) {
                     TextButton(onClick = onAction) { Text(actionLabel, color = AppMenuStyle.accent) }
                 } else if (trailingContent != null) {
@@ -126,8 +152,24 @@ fun MenuCard(
     Column(
         modifier
             .fillMaxWidth()
+            .border(1.dp, AppMenuStyle.panelBorder, RoundedCornerShape(12.dp))
             .background(AppMenuStyle.card, RoundedCornerShape(12.dp))
             .padding(14.dp),
+        content = content,
+    )
+}
+
+/** 스크롤·목록이 들어가는 안쪽 면 */
+@Composable
+fun MenuScrollSurface(
+    modifier: Modifier = Modifier,
+    content: @Composable BoxScope.() -> Unit,
+) {
+    Box(
+        modifier
+            .fillMaxWidth()
+            .border(1.dp, AppMenuStyle.scrollBorder, RoundedCornerShape(8.dp))
+            .background(AppMenuStyle.scroll, RoundedCornerShape(8.dp)),
         content = content,
     )
 }
@@ -150,6 +192,15 @@ fun MenuPrimaryButton(
 @Composable
 fun MenuSecondaryButton(text: String, onClick: () -> Unit, modifier: Modifier = Modifier) {
     OutlinedButton(onClick = onClick, modifier = modifier.fillMaxWidth()) { Text(text) }
+}
+
+@Composable
+fun MenuPurpleButton(text: String, onClick: () -> Unit, modifier: Modifier = Modifier) {
+    Button(
+        onClick = onClick,
+        modifier = modifier.fillMaxWidth(),
+        colors = ButtonDefaults.buttonColors(containerColor = AppMenuStyle.purple),
+    ) { Text(text) }
 }
 
 @Composable

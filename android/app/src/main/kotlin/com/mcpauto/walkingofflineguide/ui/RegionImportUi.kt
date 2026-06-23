@@ -4,12 +4,16 @@ import android.content.Intent
 import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -36,6 +40,7 @@ fun RegionImportButton(
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     var importing by remember { mutableStateOf(false) }
+    var showGuide by remember { mutableStateOf(false) }
 
     val launcher = rememberLauncherForActivityResult(
         ActivityResultContracts.OpenDocument(),
@@ -60,16 +65,49 @@ fun RegionImportButton(
         }
     }
 
+    if (showGuide) {
+        AlertDialog(
+            onDismissRequest = { showGuide = false },
+            title = { Text("파일에서 가져오기") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("① PC에서 export_region_bundle.py 로 지역 zip을 만듭니다.", style = MaterialTheme.typography.bodySmall)
+                    Text("② 휴대폰 다운로드·문서 폴더 등으로 zip을 옮깁니다.", style = MaterialTheme.typography.bodySmall)
+                    Text("③ 아래 「확인」 후 파일 선택 창에서 zip을 고릅니다.", style = MaterialTheme.typography.bodySmall)
+                    Text(
+                        "지도·명소 데이터는 앱 전용 저장소에만 저장됩니다. 다운로드 폴더에 zip만 넣어두면 읽지 않습니다.",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = AppMenuStyle.muted,
+                    )
+                    Text(
+                        "PC에서 export_region_bundle.py 로 만든 zip → 반드시 이 버튼으로 선택하세요.",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = AppMenuStyle.muted,
+                    )
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showGuide = false }) { Text("취소") }
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        showGuide = false
+                        launcher.launch(
+                            arrayOf(
+                                RegionImportManager.MIME_ZIP,
+                                "application/x-zip-compressed",
+                                "application/octet-stream",
+                            ),
+                        )
+                    },
+                ) { Text("확인") }
+            },
+        )
+    }
+
     OutlinedButton(
-        onClick = {
-            launcher.launch(
-                arrayOf(
-                    RegionImportManager.MIME_ZIP,
-                    "application/x-zip-compressed",
-                    "application/octet-stream",
-                ),
-            )
-        },
+        onClick = { showGuide = true },
         enabled = enabled && !importing,
         modifier = modifier.fillMaxWidth(),
     ) {
@@ -81,17 +119,4 @@ fun RegionImportButton(
         }
         Text(if (importing) "가져오는 중…" else "파일에서 가져오기")
     }
-
-    Text(
-        "PC에서 export_region_bundle.py 로 만든 zip → 다운로드·문서 폴더에서 선택",
-        style = MaterialTheme.typography.labelSmall,
-        color = AppMenuStyle.muted,
-        modifier = Modifier.padding(top = 4.dp),
-    )
-    Text(
-        "일반 폴더에 zip만 넣어두면 앱이 읽지 않습니다. 반드시 이 버튼으로 선택하세요.",
-        style = MaterialTheme.typography.labelSmall,
-        color = AppMenuStyle.muted,
-        modifier = Modifier.padding(top = 2.dp),
-    )
 }

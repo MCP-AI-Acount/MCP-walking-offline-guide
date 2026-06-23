@@ -1,6 +1,7 @@
 package com.mcpauto.walkingofflineguide.ui
 
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -15,6 +16,7 @@ import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.mcpauto.walkingofflineguide.data.Bbox
@@ -32,6 +34,8 @@ fun OfflineMiniMap(
     caption: String = "오프라인 미니 지도 (핀만)",
     showUser: Boolean = true,
     showPois: Boolean = true,
+    pickLatLon: Pair<Double, Double>? = null,
+    onMapTap: ((Double, Double) -> Unit)? = null,
 ) {
     val pad = 16f
 
@@ -39,7 +43,24 @@ fun OfflineMiniMap(
         modifier = modifier
             .fillMaxWidth()
             .height(heightDp.dp)
-            .clip(RoundedCornerShape(12.dp)),
+            .clip(RoundedCornerShape(12.dp))
+            .then(
+                if (onMapTap != null) {
+                    Modifier.pointerInput(bbox) {
+                        detectTapGestures { offset ->
+                            val innerW = size.width - pad * 2
+                            val innerH = size.height - pad * 2
+                            if (innerW <= 0f || innerH <= 0f) return@detectTapGestures
+                            val x = (offset.x - pad).coerceIn(0f, innerW)
+                            val y = (offset.y - pad).coerceIn(0f, innerH)
+                            val (lat, lon) = unproject(x, y, bbox, innerW, innerH)
+                            onMapTap(lat, lon)
+                        }
+                    }
+                } else {
+                    Modifier
+                },
+            ),
     ) {
         Canvas(modifier = Modifier.fillMaxSize()) {
             drawRoundRect(Color(0xFF1E2A3A), cornerRadius = CornerRadius(12f))
@@ -69,13 +90,24 @@ fun OfflineMiniMap(
                     drawCircle(Color(0xFF22C55E), radius = 5f, center = Offset(cx, cy))
                 }
             }
+            pickLatLon?.let { (plat, plon) ->
+                if (PoiLogic.inBbox(plat, plon, bbox)) {
+                    val (x, y) = project(plat, plon, bbox, innerW, innerH)
+                    val cx = x + pad
+                    val cy = y + pad
+                    drawCircle(Color(0x59EF4444), radius = 10f, center = Offset(cx, cy))
+                    drawCircle(Color(0xFFEF4444), radius = 5f, center = Offset(cx, cy))
+                }
+            }
         }
-        Text(
-            text = caption,
-            color = Color(0xFF8B9CB3),
-            fontSize = 11.sp,
-            modifier = Modifier.align(Alignment.TopStart),
-        )
+        if (caption.isNotBlank()) {
+            Text(
+                text = caption,
+                color = Color(0xFF8B9CB3),
+                fontSize = 11.sp,
+                modifier = Modifier.align(Alignment.TopStart),
+            )
+        }
     }
 }
 
@@ -85,4 +117,12 @@ private fun project(lat: Double, lon: Double, bbox: Bbox, w: Float, h: Float): P
     val x = ((lon - bbox.west) / lonSpan * w).toFloat()
     val y = ((bbox.north - lat) / latSpan * h).toFloat()
     return x to y
+}
+
+private fun unproject(x: Float, y: Float, bbox: Bbox, w: Float, h: Float): Pair<Double, Double> {
+    val lonSpan = (bbox.east - bbox.west).coerceAtLeast(1e-9)
+    val latSpan = (bbox.north - bbox.south).coerceAtLeast(1e-9)
+    val lon = bbox.west + (x / w) * lonSpan
+    val lat = bbox.north - (y / h) * latSpan
+    return lat to lon
 }

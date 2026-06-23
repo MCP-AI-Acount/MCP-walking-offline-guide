@@ -71,12 +71,17 @@ class GeoCatalog(context: Context) {
 
     fun resolveCountry(name: String): CountryEntry? {
         val q = norm(name)
+        if (q.isBlank()) return null
+        countries.firstOrNull { it.code.equals(name.trim(), ignoreCase = true) }?.let { return it }
         return countries.firstOrNull {
             norm(it.nameKo) == q || norm(it.nameEn) == q
         } ?: countries.firstOrNull {
             norm(it.nameKo).contains(q) || norm(it.nameEn).contains(q)
         }
     }
+
+    fun resolveCountryByCode(code: String): CountryEntry? =
+        countries.firstOrNull { it.code.equals(code.trim(), ignoreCase = true) }
 
     fun resolveCity(name: String, countryHint: String = ""): CityEntry? {
         val q = norm(name)

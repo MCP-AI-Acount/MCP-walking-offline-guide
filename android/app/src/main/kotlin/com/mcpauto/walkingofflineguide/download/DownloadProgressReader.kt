@@ -44,7 +44,7 @@ object DownloadProgressReader {
         }.getOrDefault(0)
         val lat = stop.lat.takeIf { it != 0.0 } ?: return "$done 타일 받음"
         val lon = stop.lon.takeIf { it != 0.0 } ?: return "$done 타일 받음"
-        val bbox = PoiLogic.bboxAround(lat, lon, stop.radiusKm)
+        val bbox = RegionDownloadManager.stopBbox(stop)
         var total = 0
         RegionDownloadManager.TILE_ZOOMS.forEach { z ->
             val xr = MapMath.tileXRange(bbox, z)

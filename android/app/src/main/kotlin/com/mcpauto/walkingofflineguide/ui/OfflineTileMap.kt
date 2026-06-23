@@ -69,6 +69,8 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 
+private val MapRadarCircleBlue = Color(0xFF2563EB)
+
 @Composable
 fun OfflineTileMap(
     camera: MapCamera,
@@ -249,8 +251,14 @@ fun OfflineTileMap(
                         }
                     }
                     .pointerInput(Unit) {
+                        var pinchGraceUntil = 0L
+                        var accumulatedPanPx = 0f
+                        var gpsUnlockSent = false
                         while (true) {
+                            accumulatedPanPx = 0f
+                            gpsUnlockSent = false
                             detectTransformGestures { _, pan, zoom, _ ->
+                                val now = System.currentTimeMillis()
                                 val zoomDelta = kotlin.math.abs(
                                     kotlin.math.ln(zoom.toDouble().coerceIn(1e-6, 1e6)),
                                 )
@@ -259,7 +267,14 @@ fun OfflineTileMap(
                                 val w = size.width.toFloat().coerceAtLeast(1f)
                                 val pool = activeZoomPool()
 
-                                if (zoomDelta > MAP_ZOOM_LOG_THRESHOLD) {
+                                val isPinchZoom = zoomDelta > MAP_ZOOM_LOG_THRESHOLD
+                                val isPinchHint = zoomDelta > GPS_PINCH_ZOOM_HINT_THRESHOLD
+                                if (isPinchHint) {
+                                    pinchGraceUntil = now + GPS_PINCH_GRACE_MS
+                                    accumulatedPanPx = 0f
+                                }
+
+                                if (isPinchZoom) {
                                     val spanMax = MapCameraMath.maxSpanM(heading)
                                     val spanMin = MapCameraMath.minSpanM(heading)
                                     val logSpan = kotlin.math.ln(
@@ -278,8 +293,20 @@ fun OfflineTileMap(
                                 }
 
                                 if (pan.x != 0f || pan.y != 0f) {
-                                    if (gpsLockedRef.value) {
+                                    if (!isPinchHint) {
+                                        accumulatedPanPx += hypot(pan.x, pan.y)
+                                    }
+                                    val inGrace = now < pinchGraceUntil
+                                    val panEnough = accumulatedPanPx >= GPS_PAN_UNLOCK_MIN_PX
+                                    if (
+                                        gpsLockedRef.value &&
+                                        !gpsUnlockSent &&
+                                        !inGrace &&
+                                        !isPinchHint &&
+                                        panEnough
+                                    ) {
                                         onGpsLockOffRef.value?.invoke()
+                                        gpsUnlockSent = true
                                     }
                                     val bearing = if (heading) {
                                         MapHeading.mapRotationDeg(mapBearingRef.value)
@@ -485,16 +512,10 @@ fun OfflineTileMap(
                                     } ?: Offset(drawW / 2f, drawH / 2f)
                                     val rPx = metersToScreenRadius(renderCam.visibleSpanM, vfW, radiusKm * 1000.0)
                                     drawCircle(
-                                        Color(0x552563EB),
+                                        MapRadarCircleBlue,
                                         radius = rPx,
                                         center = center,
-                                        style = Stroke(width = 2.5f),
-                                    )
-                                    drawCircle(
-                                        Color(0x3322C55E),
-                                        radius = rPx,
-                                        center = center,
-                                        style = Stroke(width = 1f),
+                                        style = Stroke(width = 0.37f),
                                     )
                                 }
                             }
@@ -537,16 +558,10 @@ fun OfflineTileMap(
                             val wf = size.width.toFloat().coerceAtLeast(1f)
                             val rPx = metersToScreenRadius(cam.visibleSpanM, wf, radiusKm * 1000.0)
                             drawCircle(
-                                Color(0x552563EB),
+                                MapRadarCircleBlue,
                                 radius = rPx,
                                 center = pivot,
-                                style = Stroke(width = 2.5f),
-                            )
-                            drawCircle(
-                                Color(0x3322C55E),
-                                radius = rPx,
-                                center = pivot,
-                                style = Stroke(width = 1f),
+                                style = Stroke(width = 0.37f),
                             )
                         }
                         drawCircle(Color(0x5922C55E), radius = 14f, center = pivot)
@@ -703,6 +718,12 @@ private const val MAX_POI_LABELS_ON_MAP = 32
 private const val POI_SCREEN_MARGIN_PX = 120f
 /** pinch 노이즈 무시 — log(zoom) 이 값 미만이면 확대/축소로 보지 않음 */
 private const val MAP_ZOOM_LOG_THRESHOLD = 0.028
+/** 핀치 직전·중 zoom 힌트 — GPS 홀드 유지용 */
+private const val GPS_PINCH_ZOOM_HINT_THRESHOLD = 0.006
+/** 핀치 직후 pan으로 GPS가 풀리지 않도록 유예(ms) */
+private const val GPS_PINCH_GRACE_MS = 520L
+/** 한 손가락 pan 누적(px) — 이 이상일 때만 GPS 홀드 해제 */
+private const val GPS_PAN_UNLOCK_MIN_PX = 64f
 
 /** POI 점·별점 — 맵 타일·GPS 핀 위 최상위 화면 레이어 */
 @Composable
@@ -762,11 +783,31 @@ private fun PoiOverlayLayer(
             drawCircle(color, radius = dotR, center = Offset(sx, sy))
             drawCircle(Color.White, radius = if (selected) 5f else 3f, center = Offset(sx, sy))
             if (showLabels && !selected) {
-                val rating = PoiLogic.formatRating(PoiLogic.displayRating(p))
-                nc.drawText("★$rating", sx - 10f, sy + 16f, poiLabelPaint)
+                drawPoiRatingLabel(
+                    nc = nc,
+                    label = "★${PoiLogic.formatRating(PoiLogic.displayRating(p))}",
+                    poiCenterX = sx,
+                    poiCenterY = sy,
+                    dotRadius = dotR,
+                )
             }
         }
     }
+}
+
+/** POI 화면 좌표(sx,sy) 기준 — 마커 원 바로 위에 별점 (헤딩업·화면 위치 무관) */
+private fun drawPoiRatingLabel(
+    nc: android.graphics.Canvas,
+    label: String,
+    poiCenterX: Float,
+    poiCenterY: Float,
+    dotRadius: Float,
+) {
+    val fm = poiLabelPaint.fontMetrics
+    val gapPx = 5f
+    // drawText Y = baseline · 텍스트 하단 = baseline + descent → 마커 상단(dotRadius 위) + gap
+    val baselineY = poiCenterY - dotRadius - gapPx - fm.descent
+    nc.drawText(label, poiCenterX, baselineY, poiLabelPaint)
 }
 
 /** 회전된 헤딩업에서 손가락 드래그 방향 = 지도 이동 방향 */
@@ -775,7 +816,8 @@ private fun screenDragToMapPan(dx: Float, dy: Float, mapRotationDeg: Float): Pai
 
 private val poiLabelPaint = android.graphics.Paint().apply {
     isAntiAlias = true
-    textSize = 20f
+    textSize = 40f
+    textAlign = android.graphics.Paint.Align.CENTER
     color = android.graphics.Color.argb(230, 30, 41, 59)
 }
 

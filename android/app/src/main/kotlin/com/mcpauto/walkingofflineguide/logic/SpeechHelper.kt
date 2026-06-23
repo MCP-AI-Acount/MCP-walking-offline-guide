@@ -14,12 +14,17 @@ class SpeechHelper(context: Context) {
         tts = TextToSpeech(context.applicationContext) { status ->
             ready = status == TextToSpeech.SUCCESS
             if (ready) {
-                tts?.language = defaultLocale
-                tts?.setSpeechRate(1.1f)
+                applyVoiceSettings(defaultLocale)
             } else {
                 lastError = true
             }
         }
+    }
+
+    private fun applyVoiceSettings(locale: Locale) {
+        tts?.language = locale
+        tts?.setSpeechRate(SPEECH_RATE)
+        tts?.setPitch(1.0f)
     }
 
     fun isAvailable(): Boolean = ready && !lastError
@@ -31,7 +36,7 @@ class SpeechHelper(context: Context) {
             return
         }
         defaultLocale = locale
-        tts?.language = locale
+        applyVoiceSettings(locale)
         tts?.stop()
         val result = tts?.speak(text, TextToSpeech.QUEUE_FLUSH, null, "poi-tts")
         if (result == TextToSpeech.ERROR) {
@@ -44,5 +49,10 @@ class SpeechHelper(context: Context) {
         tts?.stop()
         tts?.shutdown()
         tts = null
+    }
+
+    companion object {
+        /** 유저 고정 — locale 전환 시 엔진이 rate를 리셋하는 경우 대비 speak마다 재적용 */
+        const val SPEECH_RATE = 1.15f
     }
 }

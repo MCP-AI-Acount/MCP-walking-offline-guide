@@ -1,0 +1,197 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <link rel="stylesheet" href="leaflet/leaflet.css" />
+  <script src="leaflet/leaflet.js"></script>
+  <style>
+    html, body { height: 100%; width: 100%; margin: 0; padding: 0; overflow: hidden; background: #cbd5e1; }
+    #map { position: absolute; inset: 0; width: 100%; height: 100%; touch-action: none; background: #cbd5e1; }
+    #loading {
+      position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+      color: #475569; font: 13px sans-serif; background: #cbd5e1; z-index: 9999;
+    }
+    .pin {
+      color: #fff; border-radius: 50%; display: flex; align-items: center; justify-content: center;
+      border: 2px solid #fff; box-shadow: 0 1px 4px rgba(0,0,0,.35); font-weight: bold;
+    }
+    .airport-pin { background: #2563eb; width: 28px; height: 28px; font-size: 14px; }
+    .route-pin { background: #16a34a; width: 26px; height: 26px; font-size: 12px; }
+    .start-pin { background: #15803d; width: 24px; height: 24px; font-size: 11px; }
+    .way-pin { background: #d97706; width: 24px; height: 24px; font-size: 10px; }
+    .end-pin { background: #dc2626; width: 24px; height: 24px; font-size: 11px; }
+    .pick-pin { background: #ef4444; width: 22px; height: 22px; font-size: 11px; }
+  </style>
+</head>
+<body>
+  <div id="loading">지도 불러오는 중…</div>
+  <div id="map"></div>
+  <script>
+    var map, pickMarker, airportMarker, routeLayer = [], mapReady = false, resizeTimer = null;
+
+    function hideLoading() {
+      var el = document.getElementById('loading');
+      if (el) el.style.display = 'none';
+    }
+
+    function showLoading(msg) {
+      var el = document.getElementById('loading');
+      if (el) {
+        el.style.display = 'flex';
+        if (msg) el.textContent = msg;
+      }
+    }
+
+    function resizeMap() {
+      var el = document.getElementById('map');
+      if (el) {
+        el.style.height = window.innerHeight + 'px';
+        el.style.width = window.innerWidth + 'px';
+      }
+      if (map) map.invalidateSize({ animate: false, pan: false });
+    }
+
+    function scheduleResize() {
+      if (resizeTimer) clearTimeout(resizeTimer);
+      resizeTimer = setTimeout(function() {
+        resizeTimer = null;
+        resizeMap();
+      }, 80);
+    }
+
+    function parseMarkers(raw) {
+      if (!raw || raw === '[]') return [];
+      try { return JSON.parse(raw); } catch (e) { return []; }
+    }
+
+    function markerIcon(kind, label, index) {
+      var cls = 'pin route-pin', html = '●', size = [26, 26], anchor = [13, 13];
+      if (kind === 'airport') { cls = 'pin airport-pin'; html = '✈'; size = [28, 28]; anchor = [14, 14]; }
+      else if (kind === 'start') { cls = 'pin start-pin'; html = '출'; size = [24, 24]; anchor = [12, 12]; }
+      else if (kind === 'waypoint') { cls = 'pin way-pin'; html = String((index || 0) + 1); size = [24, 24]; anchor = [12, 12]; }
+      else if (kind === 'end') { cls = 'pin end-pin'; html = '도'; size = [24, 24]; anchor = [12, 12]; }
+      return L.divIcon({ className: cls, html: html, iconSize: size, iconAnchor: anchor });
+    }
+
+    function clearRouteMarkers() {
+      routeLayer.forEach(function(m) { map.removeLayer(m); });
+      routeLayer = [];
+    }
+
+    function addRouteMarkers(markers) {
+      clearRouteMarkers();
+      if (!map || !markers || !markers.length) return;
+      var wayIdx = 0;
+      markers.forEach(function(m) {
+        var idx = m.kind === 'waypoint' ? wayIdx++ : 0;
+        var icon = markerIcon(m.kind, m.label, idx);
+        var mk = L.marker([m.lat, m.lon], { icon: icon, zIndexOffset: 400 })
+          .bindTooltip(m.label || '', { direction: 'top', offset: [0, -8] })
+          .addTo(map);
+        routeLayer.push(mk);
+      });
+    }
+
+    function setPick(lat, lng) {
+      if (!map || typeof L === 'undefined') return;
+      if (pickMarker) map.removeLayer(pickMarker);
+      var icon = L.divIcon({ className: 'pin pick-pin', html: '●', iconSize: [22, 22], iconAnchor: [11, 11] });
+      pickMarker = L.marker([lat, lng], { icon: icon, zIndexOffset: 1000 }).addTo(map);
+    }
+
+    function near(a, b) {
+      return Math.abs(a.lat - b.lat) < 0.00005 && Math.abs(a.lon - b.lon) < 0.00005;
+    }
+
+    function fitAll(clat, clon, plat, plon, markers, animate) {
+      if (!map) return;
+      var pts = [];
+      markers.forEach(function(m) { pts.push([m.lat, m.lon]); });
+      if (plat !== null && plon !== null && !isNaN(plat) && !isNaN(plon)) pts.push([plat, plon]);
+      if (pts.length > 1) {
+        map.fitBounds(L.latLngBounds(pts), { padding: [36, 36], maxZoom: 15, animate: !!animate });
+      } else if (pts.length === 1) {
+        map.setView(pts[0], 14, { animate: !!animate });
+      } else {
+        map.setView([clat, clon], 14, { animate: !!animate });
+      }
+    }
+
+    function applyRefMarker(clat, clon, refLabel, refIsAirport, markers) {
+      if (airportMarker) {
+        map.removeLayer(airportMarker);
+        airportMarker = null;
+      }
+      var refInRoute = markers.some(function(m) { return near(m, { lat: clat, lon: clon }); });
+      if (refInRoute) return;
+      var refIcon = refIsAirport
+        ? markerIcon('airport', refLabel, 0)
+        : L.divIcon({ className: 'pin route-pin', html: '●', iconSize: [26, 26], iconAnchor: [13, 13] });
+      airportMarker = L.marker([clat, clon], {
+        icon: refIcon,
+        title: refLabel || (refIsAirport ? '입국 공항' : '이전 지점'),
+        zIndexOffset: 500,
+      }).bindTooltip(refLabel || '', { direction: 'top', offset: [0, -8] }).addTo(map);
+    }
+
+    function ensureMap() {
+      if (map) return;
+      map = L.map('map', { tap: true, zoomControl: true, attributionControl: false, fadeAnimation: false, zoomAnimation: false });
+      L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}.png', {
+        subdomains: 'abcd',
+        maxZoom: 19,
+        attribution: '&copy; OSM &copy; CARTO',
+        updateWhenIdle: true,
+        keepBuffer: 2,
+      }).on('tileerror', function() {
+        showLoading('지도 타일 로드 실패 — Wi‑Fi/데이터 확인');
+      }).addTo(map);
+      map.on('click', function(e) {
+        var lat = e.latlng.lat;
+        var lng = e.latlng.lng;
+        setPick(lat, lng);
+        if (window.AndroidBridge && AndroidBridge.onMapPick) {
+          AndroidBridge.onMapPick(String(lat), String(lng));
+        }
+      });
+      mapReady = true;
+    }
+
+    function applyMapState(clat, clon, plat, plon, refLabel, refIsAirport, markersJson, refit) {
+      var markers = parseMarkers(markersJson);
+      ensureMap();
+      addRouteMarkers(markers);
+      applyRefMarker(clat, clon, refLabel, refIsAirport, markers);
+      if (plat !== null && plon !== null && !isNaN(plat) && !isNaN(plon)) {
+        setPick(plat, plon);
+      } else if (pickMarker) {
+        map.removeLayer(pickMarker);
+        pickMarker = null;
+      }
+      if (refit) fitAll(clat, clon, plat, plon, markers, false);
+      hideLoading();
+      scheduleResize();
+    }
+
+    function initMap(clat, clon, plat, plon, refLabel, refIsAirport, markersJson) {
+      if (typeof L === 'undefined') {
+        setTimeout(function() { initMap(clat, clon, plat, plon, refLabel, refIsAirport, markersJson); }, 80);
+        return;
+      }
+      resizeMap();
+      applyMapState(clat, clon, plat, plon, refLabel, refIsAirport, markersJson, true);
+      if (window.AndroidBridge && AndroidBridge.onMapReady) {
+        AndroidBridge.onMapReady();
+      }
+    }
+
+    function refreshMap(clat, clon, plat, plon, refLabel, refIsAirport, markersJson) {
+      if (typeof L === 'undefined' || !mapReady) return;
+      applyMapState(clat, clon, plat, plon, refLabel, refIsAirport, markersJson, false);
+    }
+
+    window.addEventListener('resize', scheduleResize);
+  </script>
+</body>
+</html>

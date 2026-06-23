@@ -50,6 +50,30 @@ object OnDemandRouting {
             HomeProgressiveDownloader.forceRebuildRoutingGraphAt(context, lat, lon)
         }
 
+    /** 기존 그래프 삭제 후 현재 GPS·앵커 기준 재빌드 */
+    suspend fun forceRebuildGraph(
+        context: Context,
+        regionId: String,
+        lat: Double,
+        lon: Double,
+        radiusKm: Double = MapMath.POI_VIEW_RADIUS_KM,
+    ): Boolean = withContext(Dispatchers.IO) {
+        val key = regionKeyFor(regionId)
+        if (key == HomeProgressiveDownloader.REGION_ID) {
+            return@withContext HomeProgressiveDownloader.forceRebuildRoutingGraphAt(context, lat, lon)
+        }
+        val graphFile = File(context.filesDir, "walking_data/regions/$key/routing_graph.json")
+        if (graphFile.exists()) graphFile.delete()
+        RoutingGraph.invalidate(key)
+        runCatching {
+            graphFile.parentFile?.mkdirs()
+            val body = builder.buildAndSerialize(PoiLogic.bboxAround(lat, lon, radiusKm))
+            if (body.length < 48) return@runCatching false
+            SafeStorage.atomicWriteText(graphFile, body)
+            true
+        }.getOrDefault(false)
+    }
+
     suspend fun reloadGraph(context: Context, regionId: String): RoutingGraph {
         val key = regionKeyFor(regionId)
         return RoutingGraph.reload(context, key)

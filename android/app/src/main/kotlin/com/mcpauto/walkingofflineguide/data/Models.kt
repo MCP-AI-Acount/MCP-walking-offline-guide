@@ -41,12 +41,14 @@ data class CityStop(
     val name: String,
     val lat: Double = 0.0,
     val lon: Double = 0.0,
-    /** 출발·경유·도착 각 지점 주변 오프라인 다운로드 반경 */
+    /** 출발·경유·도착 직선 경로 반경(km) — customBbox 없을 때 원형 bbox */
     @SerialName("radius_km") val radiusKm: Double = STOP_DOWNLOAD_RADIUS_KM,
+    /** 직선 경로 corridor bbox — 있으면 원형 bbox 대신 사용 */
+    @SerialName("custom_bbox") val customBbox: Bbox? = null,
 )
 
 /** 출발지·경유지·도착지 공통 — 지점 중심 반경(km) */
-const val STOP_DOWNLOAD_RADIUS_KM = 5.0
+const val STOP_DOWNLOAD_RADIUS_KM = 3.0
 
 @Serializable
 data class TripConfig(

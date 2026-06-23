@@ -59,23 +59,36 @@ class HomeProgressiveDownloader(
         val dir = regionDir()
         dir.mkdirs()
         ensureRegionRecord(lat, lon, homeCountryLabel)
-        ensureRoutingGraph(lat, lon, dir)
 
-        val poiRadii = listOf(1.0, 3.0, 5.0, 8.0)
         val merged = linkedMapOf<String, com.mcpauto.walkingofflineguide.data.Poi>()
+        val poiRadii = listOf(1.0, 3.0, 5.0, 8.0)
         for (rKm in poiRadii) {
             coroutineContext.ensureActive()
             if (cancelled) throw CancellationException("home download cancelled")
             val bb = PoiLogic.bboxAround(lat, lon, rKm)
-            val batch = overpass.fetchPois(bb, homeLangTag)
+            val batch = runCatching { overpass.fetchPois(bb, homeLangTag) }.getOrDefault(emptyList())
             batch.forEach { merged[it.id] = it }
-            savePoiBundle(merged.values.toList(), bb)
-            withContext(Dispatchers.Main) { onPoiBatch() }
-            Thread.sleep(800)
+            if (merged.isNotEmpty()) {
+                savePoiBundle(merged.values.toList(), bb)
+                withContext(Dispatchers.Main) { onPoiBatch() }
+            }
+            if (rKm == 1.0) {
+                ensureRoutingGraph(lat, lon, dir)
+            }
+            Thread.sleep(300)
         }
 
         downloadTilesNearToFar(lat, lon, dir)
         ensureTilesZip(dir)
+    }
+
+    /** 1km 빠른 POI — 전체 다운로드 대기 전 UI 표시용 */
+    suspend fun fetchQuickPois(lat: Double, lon: Double, homeLangTag: String): Int = withContext(Dispatchers.IO) {
+        val bb = PoiLogic.bboxAround(lat, lon, 1.0)
+        val batch = runCatching { overpass.fetchPois(bb, homeLangTag) }.getOrDefault(emptyList())
+        if (batch.isEmpty()) return@withContext 0
+        savePoiBundle(batch, bb)
+        batch.size
     }
 
     private suspend fun downloadTilesNearToFar(lat: Double, lon: Double, regionDir: File) {
@@ -168,7 +181,20 @@ class HomeProgressiveDownloader(
     /** 타일·POI 다운로드와 별도 — 도보 경로 그래프만 우선 확보 */
     suspend fun ensureRoutingGraphForPosition(lat: Double, lon: Double): Boolean = withContext(Dispatchers.IO) {
         val dir = regionDir().also { it.mkdirs() }
-        ensureRoutingGraph(lat, lon, dir)
+        val graphFile = File(dir, "routing_graph.json")
+        val rec = store.loadRegions().find { it.id == REGION_ID }
+        if (!graphFile.exists() || graphFile.length() <= 32) {
+            return@withContext ensureRoutingGraph(lat, lon, dir)
+        }
+        if (rec != null) {
+            val movedM = PoiLogic.haversineM(rec.lat, rec.lon, lat, lon)
+            if (movedM > ROUTING_REBUILD_MOVE_M) {
+                return@withContext ensureRoutingGraph(lat, lon, dir, force = true).also { ok ->
+                    if (ok) store.saveRegion(rec.copy(lat = lat, lon = lon))
+                }
+            }
+        }
+        true
     }
 
     suspend fun forceRebuildRoutingGraphForPosition(lat: Double, lon: Double): Boolean = withContext(Dispatchers.IO) {
@@ -235,6 +261,8 @@ class HomeProgressiveDownloader(
 
         /** GPS 약 500m 이동마다 재호출 */
         private const val RETRIGGER_MOVE_M = 500.0
+        /** 도보 그래프 — 이 거리 이상 이동 시 재빌드 */
+        private const val ROUTING_REBUILD_MOVE_M = 500.0
         /** GPS 주변 도보 경로 그래프만 즉시 확보 (타일 다운로드와 분리) */
         suspend fun ensureRoutingGraphAt(context: Context, lat: Double, lon: Double): Boolean =
             HomeProgressiveDownloader(context).ensureRoutingGraphForPosition(lat, lon)
@@ -252,13 +280,24 @@ class HomeProgressiveDownloader(
             onRoutingGraphReady: suspend () -> Unit = {},
         ) {
             val dl = HomeProgressiveDownloader(context)
+            val poiFile = File(context.filesDir, "walking_data/regions/$REGION_ID/poi.json")
+            if (poiFile.exists() && poiFile.length() > 48) {
+                onPoiBatch()
+            }
+
+            val graphFile = File(context.filesDir, "walking_data/regions/$REGION_ID/routing_graph.json")
+            val graphMissing = !graphFile.exists() || graphFile.length() <= 32
+            val poiSparse = !poiFile.exists() || poiFile.length() < 48
+
+            if (poiSparse) {
+                val n = dl.fetchQuickPois(lat, lon, homeLangTag)
+                if (n > 0) onPoiBatch()
+            }
+
             if (dl.ensureRoutingGraphForPosition(lat, lon)) {
                 onRoutingGraphReady()
             }
-            val graphFile = File(context.filesDir, "walking_data/regions/$REGION_ID/routing_graph.json")
-            val poiFile = File(context.filesDir, "walking_data/regions/$REGION_ID/poi.json")
-            val graphMissing = !graphFile.exists() || graphFile.length() <= 32
-            val poiSparse = !poiFile.exists() || poiFile.length() < 48
+
             sessionMutex.withLock {
                 if (running) return
                 val prevLat = lastLat

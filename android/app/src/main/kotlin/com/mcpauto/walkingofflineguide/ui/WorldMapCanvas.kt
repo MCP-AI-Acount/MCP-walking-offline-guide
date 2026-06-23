@@ -36,7 +36,7 @@ fun WorldMapCanvas(
 ) {
     val blinkAlpha = if (blinkHighlight && highlightId != null) {
         rememberInfiniteTransition(label = "blink").animateFloat(
-            initialValue = 0.4f,
+            initialValue = 0.45f,
             targetValue = 1f,
             animationSpec = infiniteRepeatable(tween(600), RepeatMode.Reverse),
             label = "a",
@@ -65,7 +65,7 @@ fun WorldMapCanvas(
                     detectTapGestures { offset ->
                         val w = size.width.toFloat()
                         val h = size.height.toFloat()
-                        if (w <= 0f || h <= 0f) return@detectTapGestures
+                        if (w <= 0f || h <= 0f || completed.isEmpty()) return@detectTapGestures
                         completed.minByOrNull { r ->
                             val (px, py) = MapMath.projectWorld(r.lat, r.lon, w, h)
                             val dx = px - offset.x
@@ -75,7 +75,7 @@ fun WorldMapCanvas(
                             val (px, py) = MapMath.projectWorld(best.lat, best.lon, w, h)
                             val dx = px - offset.x
                             val dy = py - offset.y
-                            if (dx * dx + dy * dy < 1600f) onRegionTap(best)
+                            if (dx * dx + dy * dy < 4900f) onRegionTap(best)
                         }
                     }
                 },
@@ -85,12 +85,18 @@ fun WorldMapCanvas(
             if (w <= 0f || h <= 0f) return@Canvas
             completed.forEach { r ->
                 val (px, py) = MapMath.projectWorld(r.lat, r.lon, w, h)
-                val base = if (r.visited) Color(0xFF4ADE80) else Color(0xFF94A3B8)
-                val alpha = if (r.id == highlightId && blinkHighlight) blinkAlpha else 1f
-                val radius = if (r.id == highlightId) 14f else 9f
-                drawCircle(base.copy(alpha = alpha * 0.45f), radius = radius * 2.5f, center = Offset(px, py))
+                val isHighlight = r.id == highlightId
+                val alpha = if (isHighlight && blinkHighlight) blinkAlpha else 1f
+                val base = when {
+                    isHighlight -> Color(0xFF38BDF8)
+                    r.visited -> Color(0xFF4ADE80)
+                    else -> Color(0xFF60A5FA)
+                }
+                val radius = if (isHighlight) 18f else 14f
+                drawCircle(base.copy(alpha = alpha * 0.25f), radius = radius * 3.2f, center = Offset(px, py))
+                drawCircle(base.copy(alpha = alpha * 0.55f), radius = radius * 1.8f, center = Offset(px, py))
                 drawCircle(base.copy(alpha = alpha), radius = radius, center = Offset(px, py))
-                drawCircle(Color.White, radius = 3f, center = Offset(px, py))
+                drawCircle(Color.White, radius = 4f, center = Offset(px, py))
             }
         }
     }

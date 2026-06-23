@@ -19,57 +19,70 @@ import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.IconToggleButton
-import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.PlatformTextStyle
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import androidx.compose.foundation.layout.offset
 import androidx.compose.ui.unit.sp
 import com.mcpauto.walkingofflineguide.map.MapUiColors
 
-/** 지도 상단 중앙 — 반경 표시 (원형 링) */
+private val MapChromeBtn = 36.dp
+private val MapChromeIcon = 22.dp
+/** GPS 홀드 토글(MapChromeBtn)과 동일 — 반경 배지 (지도 원보다 작게) */
+private val MapRadarBadge = 28.dp
+private val RadarBlue = Color(0xFF2563EB)
+
+/** 지도 상단 — 반경 배지 (지름 m · 숫자+m 한 덩어리 중앙) */
 @Composable
 fun RadarRadiusBadge(
     radarRadiusM: Int,
     onCycle: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    val label = if (radarRadiusM == 0) "OFF" else "${radarRadiusM}m"
     val active = radarRadiusM > 0
     Box(
         modifier = modifier
             .border(
-                width = 1.5.dp,
-                color = if (active) Color(0xFF15803D) else Color(0xFF94A3B8),
+                width = 0.33.dp,
+                color = if (active) RadarBlue else Color(0xFF94A3B8),
                 shape = CircleShape,
             )
-            .background(Color(0xE6FFFFFF), CircleShape)
             .clickable(onClick = onCycle),
         contentAlignment = Alignment.Center,
     ) {
-        Text(
-            text = label,
-            style = MaterialTheme.typography.labelSmall,
-            fontSize = when {
-                label == "OFF" -> 6.5.sp
-                label.length > 4 -> 5.5.sp
-                else -> 7.sp
-            },
-            fontWeight = FontWeight.Bold,
-            color = if (active) Color(0xFF15803D) else Color(0xFF64748B),
-            textAlign = TextAlign.Center,
-            maxLines = 1,
-        )
+        if (!active) {
+            Text(
+                text = "OFF",
+                fontSize = 5.sp,
+                fontWeight = FontWeight.Bold,
+                color = Color(0xFF64748B),
+                textAlign = TextAlign.Center,
+                maxLines = 1,
+                lineHeight = 5.sp,
+                style = TextStyle(platformStyle = PlatformTextStyle(includeFontPadding = false)),
+                modifier = Modifier.offset(y = 0.3.dp),
+            )
+        } else {
+            Text(
+                text = "${radarRadiusM}m",
+                fontSize = 5.2.sp,
+                fontWeight = FontWeight.Bold,
+                color = RadarBlue,
+                textAlign = TextAlign.Center,
+                maxLines = 1,
+                lineHeight = 5.2.sp,
+                style = TextStyle(platformStyle = PlatformTextStyle(includeFontPadding = false)),
+            )
+        }
     }
 }
-
-private val MapChromeBtn = 36.dp
-private val MapChromeIcon = 22.dp
-private val MapRadarBadge = 40.dp
 
 /** 지도 우상단 — 반경(왼쪽) + GPS(오른쪽), 크기 통일 */
 @Composable
@@ -126,7 +139,7 @@ fun MapSideControlPanel(
         modifier = modifier
             .width(48.dp)
             .fillMaxHeight()
-            .background(MapUiColors.sidePanelBg)
+            .background(MapUiColors.panelBg)
             .statusBarsPadding()
             .padding(top = 1.dp, bottom = 8.dp)
             .padding(horizontal = 2.dp),

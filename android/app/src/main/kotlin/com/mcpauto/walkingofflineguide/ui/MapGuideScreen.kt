@@ -306,7 +306,7 @@ fun MapGuideScreen(
     var headingDeg by remember { mutableStateOf<Float?>(null) }
     var targetHeadingDeg by remember { mutableStateOf<Float?>(null) }
     var tileCacheGeneration by remember { mutableIntStateOf(0) }
-    var radarRadiusM by remember { mutableIntStateOf(1000) }
+    var radarRadiusM by remember { mutableIntStateOf(MapMath.DEFAULT_RADAR_RADIUS_M) }
     var gpsPlaceLabel by remember { mutableStateOf<String?>(null) }
     var lastReverseLat by remember { mutableStateOf<Double?>(null) }
     var lastReverseLon by remember { mutableStateOf<Double?>(null) }
@@ -690,7 +690,7 @@ fun MapGuideScreen(
 
         if (!hasInternet) return@LaunchedEffect
 
-        val radiiKm = listOf(4.0, 2.0, 8.0)
+        val radiiKm = listOf(1.5, 2.0, 4.0, 8.0)
         for (rKm in radiiKm) {
             val bb = PoiLogic.bboxAround(anchorLat, anchorLon, rKm)
             val result = runCatching { fetchNearbyPois(overpass, bb, homeLang, destLang) }
@@ -707,9 +707,11 @@ fun MapGuideScreen(
                     return@LaunchedEffect
                 }
             }.onFailure { err ->
-                poiFetchError = err.message?.take(120)
+                if (poiFetchError == null) {
+                    poiFetchError = err.message?.take(120)
+                }
             }
-            delay(300)
+            delay(200)
         }
     }
 
@@ -1035,8 +1037,10 @@ fun MapGuideScreen(
             return@LaunchedEffect
         }
         val radiusKm = if (region.downloadComplete) STOP_DOWNLOAD_RADIUS_KM else MapMath.POI_VIEW_RADIUS_KM
+        val anchorLat = if (hasRealGpsFix) pos.lat else region.lat
+        val anchorLon = if (hasRealGpsFix) pos.lon else region.lon
         if (region.downloadComplete || hasInternet) {
-            val built = OnDemandRouting.ensureGraph(context, region.id, region.lat, region.lon, radiusKm)
+            val built = OnDemandRouting.ensureGraph(context, region.id, anchorLat, anchorLon, radiusKm)
             if (built) {
                 routingGraph = OnDemandRouting.reloadGraph(context, region.id)
             }
@@ -1080,6 +1084,18 @@ fun MapGuideScreen(
             else -> MapMath.POI_VIEW_RADIUS_KM
         }
 
+        suspend fun tryApplyRoute(graph: RoutingGraph?): Boolean {
+            if (graph == null || !graph.hasData) return false
+            val pts = graph.route(mapAnchorLat, mapAnchorLon, target.lat, target.lon)
+            if (pts.size <= 2) return false
+            val len = graph.routeLengthM(pts)
+            val straight = straightLineDistanceM ?: 0
+            if (straight > 0 && len <= straight + 20) return false
+            routePoints = pts
+            routeDistanceM = len
+            return true
+        }
+
         suspend fun loadGraph(): RoutingGraph? {
             var graph = routingGraph?.takeIf { it.hasData }
             if (graph == null) {
@@ -1098,32 +1114,17 @@ fun MapGuideScreen(
             return graph?.takeIf { it.hasData }
         }
 
-        var g = loadGraph() ?: return@LaunchedEffect
+        var g = loadGraph()
+        if (tryApplyRoute(g)) return@LaunchedEffect
 
-        fun applyWalkRoute(graph: RoutingGraph): Boolean {
-            val pts = graph.route(mapAnchorLat, mapAnchorLon, target.lat, target.lon)
-            if (pts.size <= 2) return false
-            routePoints = pts
-            routeDistanceM = graph.routeLengthM(pts)
-            return true
-        }
-
-        if (!applyWalkRoute(g)) {
-            if (hasInternet && homeRouting) {
-                if (OnDemandRouting.forceRebuildHomeGraph(context, mapAnchorLat, mapAnchorLon)) {
-                    g = OnDemandRouting.reloadGraph(context, routingKey)
-                    routingGraph = g
-                    applyWalkRoute(g)
-                }
-            } else if (hasInternet) {
-                val rebuilt = OnDemandRouting.ensureGraph(
-                    context, routingKey, mapAnchorLat, mapAnchorLon, radiusKm,
-                )
-                if (rebuilt) {
-                    g = OnDemandRouting.reloadGraph(context, routingKey)
-                    routingGraph = g
-                    applyWalkRoute(g)
-                }
+        if (hasInternet || region.downloadComplete || homeRouting) {
+            val rebuilt = OnDemandRouting.forceRebuildGraph(
+                context, routingKey, mapAnchorLat, mapAnchorLon, radiusKm,
+            )
+            if (rebuilt) {
+                g = OnDemandRouting.reloadGraph(context, routingKey)
+                routingGraph = g
+                tryApplyRoute(g)
             }
         }
     }
@@ -1262,7 +1263,7 @@ fun MapGuideScreen(
                     .fillMaxWidth()
                     .offset(y = -MapContentOverlapDp)
                     .zIndex(2f)
-                    .background(MapUiColors.sidePanelBg)
+                    .background(MapUiColors.panelBg)
                     .padding(horizontal = 4.dp, vertical = 2.dp),
             ) {
                 Row(
@@ -1313,17 +1314,12 @@ fun MapGuideScreen(
                         ui = ui,
                     )
                 }
-                Text(
-                    ui.routeHint,
-                    style = MaterialTheme.typography.labelSmall,
-                    color = Color(0xFF64748B),
-                    fontSize = 10.sp,
-                    lineHeight = 12.sp,
-                    modifier = Modifier.padding(bottom = 2.dp),
-                )
                 LazyColumn(
                     state = listState,
-                    modifier = Modifier.weight(1f),
+                    modifier = Modifier
+                        .weight(1f)
+                        .background(MapUiColors.scrollBg, RoundedCornerShape(8.dp))
+                        .padding(horizontal = 4.dp, vertical = 2.dp),
                     contentPadding = PaddingValues(bottom = 4.dp),
                 ) {
                     if (filteredPois.isEmpty()) {

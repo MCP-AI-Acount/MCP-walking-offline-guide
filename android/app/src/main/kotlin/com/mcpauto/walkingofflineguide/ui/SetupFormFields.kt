@@ -4,14 +4,18 @@ import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.border
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import android.content.Context
 import android.app.DatePickerDialog
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.width
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import com.mcpauto.walkingofflineguide.data.defaultScheduleLeg
 import com.mcpauto.walkingofflineguide.logic.PoiLogic
@@ -19,16 +23,23 @@ import java.time.LocalDate
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.ui.graphics.RectangleShape
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.CalendarMonth
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -39,9 +50,14 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
+import androidx.compose.material3.Surface
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -52,7 +68,12 @@ import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
+import androidx.compose.ui.platform.LocalView
+import androidx.compose.ui.window.DialogWindowProvider
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.unit.dp
@@ -62,13 +83,20 @@ import com.mcpauto.walkingofflineguide.data.CountryEntry
 import com.mcpauto.walkingofflineguide.data.GeoCatalog
 import com.mcpauto.walkingofflineguide.data.ScheduleLeg
 import com.mcpauto.walkingofflineguide.network.GeoResult
+import com.mcpauto.walkingofflineguide.network.LocalAdminGeocoder
 import com.mcpauto.walkingofflineguide.network.NominatimGeocoder
+import com.mcpauto.walkingofflineguide.network.adminPlaceLabel
+import com.mcpauto.walkingofflineguide.util.HomeLanguage
 import com.mcpauto.walkingofflineguide.util.countryFlagEmoji
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 private val SuggestionRowHeight = 48.dp
 private const val SuggestionMaxVisibleRows = 3
+private val CompactDateLabelSp = 9.sp
+private val CompactDateTextSp = 11.sp
+private val CompactFieldLabelSp = 9.sp
+private val CompactFieldTextSp = 12.sp
 
 /** U3-Autocomplete — 입력·드롭다운·스크롤 한 세트. @see UX_CONVENIENCE_CANON.md § U3-Autocomplete */
 @Composable
@@ -90,9 +118,9 @@ private fun <T> GeoSuggestionDropdownList(
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(top = 4.dp),
-            colors = CardDefaults.cardColors(containerColor = Color(0xFFF8FAFC)),
+            colors = CardDefaults.cardColors(containerColor = AppMenuStyle.scroll),
             elevation = CardDefaults.cardElevation(defaultElevation = 2.dp),
-            border = BorderStroke(1.dp, Color(0xFFCBD5E1)),
+            border = BorderStroke(1.dp, AppMenuStyle.scrollBorder),
         ) {
             LazyColumn(
                 state = listState,
@@ -102,7 +130,7 @@ private fun <T> GeoSuggestionDropdownList(
             ) {
                 itemsIndexed(items) { index, item ->
                     if (index > 0) {
-                        HorizontalDivider(color = Color(0xFFE2E8F0), thickness = 1.dp)
+                        HorizontalDivider(color = AppMenuStyle.scrollBorder, thickness = 1.dp)
                     }
                     GeoSuggestionRow(
                         text = label(item),
@@ -184,10 +212,11 @@ fun tripYearFromEpoch(tripStartEpochDay: Long): Int =
 
 @Composable
 private fun SetupLayerFrame(
-    title: String,
+    title: String?,
     borderColor: Color,
     backgroundColor: Color,
     modifier: Modifier = Modifier,
+    titleTrailing: (@Composable () -> Unit)? = null,
     content: @Composable androidx.compose.foundation.layout.ColumnScope.() -> Unit,
 ) {
     Column(
@@ -195,32 +224,60 @@ private fun SetupLayerFrame(
             .fillMaxWidth()
             .border(1.5.dp, borderColor, RectangleShape)
             .background(backgroundColor, RectangleShape)
-            .padding(12.dp),
+            .padding(horizontal = 8.dp, vertical = 6.dp),
     ) {
-        Text(title, fontWeight = FontWeight.SemiBold, color = borderColor)
-        Spacer(Modifier.height(8.dp))
+        if (title != null || titleTrailing != null) {
+            Row(
+                Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                if (title != null) {
+                    Text(title, fontWeight = FontWeight.SemiBold, color = borderColor)
+                } else {
+                    Spacer(Modifier.weight(1f))
+                }
+                titleTrailing?.invoke()
+            }
+            Spacer(Modifier.height(4.dp))
+        }
         content()
     }
 }
 
 @Composable
-private fun RectDateCell(
+private fun OutlineDateField(
     label: String,
     display: String,
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
-    accent: Color = Color(0xFF334155),
 ) {
-    Column(
-        modifier
-            .border(1.dp, accent.copy(alpha = 0.35f), RectangleShape)
-            .background(Color.White, RectangleShape)
-            .clickable(onClick = onClick)
-            .padding(horizontal = 10.dp, vertical = 8.dp),
-    ) {
-        Text(label, style = MaterialTheme.typography.labelSmall, color = Color(0xFF64748B))
-        Text(display, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Medium)
-    }
+    OutlinedTextField(
+        value = display,
+        onValueChange = {},
+        readOnly = true,
+        label = { Text(label, fontSize = CompactDateLabelSp) },
+        placeholder = { Text("선택", color = Color(0xFFCBD5E1), fontSize = CompactDateTextSp) },
+        textStyle = TextStyle(fontSize = CompactDateTextSp, lineHeight = 14.sp),
+        modifier = modifier
+            .defaultMinSize(minHeight = 40.dp)
+            .fillMaxWidth()
+            .pointerInput(onClick) {
+                detectTapGestures { onClick() }
+            },
+        singleLine = true,
+        shape = RectangleShape,
+        trailingIcon = {
+            IconButton(onClick = onClick) {
+                Icon(
+                    Icons.Default.CalendarMonth,
+                    contentDescription = "달력",
+                    tint = Color(0xFF64748B),
+                    modifier = Modifier.size(18.dp),
+                )
+            }
+        },
+    )
 }
 
 @Composable
@@ -241,16 +298,14 @@ fun TripDateRangeRow(
             base.monthValue - 1,
             base.dayOfMonth,
         ).apply {
-            datePicker.calendarViewShown = false
-            @Suppress("DEPRECATION")
-            datePicker.spinnersShown = true
+            datePicker.calendarViewShown = true
         }.show()
     }
     val startDisplay = if (startEpochDay > 0) PoiLogic.formatDate(startEpochDay) else "선택"
     val endDisplay = if (endEpochDay > 0) PoiLogic.formatDate(endEpochDay) else "선택"
-    Row(modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        RectDateCell(
-            label = "출발일",
+    Row(modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+        OutlineDateField(
+            label = "출국일",
             display = startDisplay,
             onClick = {
                 showPicker(startEpochDay) { start ->
@@ -259,9 +314,8 @@ fun TripDateRangeRow(
                 }
             },
             modifier = Modifier.weight(1f),
-            accent = Color(0xFF4F46E5),
         )
-        RectDateCell(
+        OutlineDateField(
             label = "귀국일",
             display = endDisplay,
             onClick = {
@@ -271,7 +325,6 @@ fun TripDateRangeRow(
                 }
             },
             modifier = Modifier.weight(1f),
-            accent = Color(0xFF4F46E5),
         )
     }
 }
@@ -305,7 +358,7 @@ fun LegMonthDayRangeRow(
             datePicker.spinnersShown = true
         }.show()
     }
-    Row(modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+    Row(modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
         MonthDayField(
             epochDay = startEpochDay,
             tripYear = tripYear,
@@ -316,7 +369,6 @@ fun LegMonthDayRangeRow(
             },
             onOpenPicker = { showPicker(startEpochDay, onStartChange) },
             modifier = Modifier.weight(1f),
-            accent = Color(0xFF0F766E),
         )
         MonthDayField(
             epochDay = endEpochDay.coerceAtLeast(startEpochDay.takeIf { it > 0 } ?: endEpochDay),
@@ -330,15 +382,6 @@ fun LegMonthDayRangeRow(
                 showPicker(endEpochDay.coerceAtLeast(startEpochDay.takeIf { it > 0 } ?: endEpochDay), onEndChange)
             },
             modifier = Modifier.weight(1f),
-            accent = Color(0xFF0F766E),
-        )
-    }
-    if (tripStartBound > 0 && tripEndBound >= tripStartBound) {
-        Text(
-            "여행 ${formatMonthDay(tripStartBound)}~${formatMonthDay(tripEndBound)} (${tripYear}년) 안에서만 선택",
-            style = MaterialTheme.typography.labelSmall,
-            color = Color(0xFF64748B),
-            modifier = Modifier.padding(top = 4.dp),
         )
     }
 }
@@ -351,32 +394,30 @@ private fun MonthDayField(
     onEpochDayChange: (Long) -> Unit,
     onOpenPicker: () -> Unit,
     modifier: Modifier = Modifier,
-    accent: Color = Color(0xFF0F766E),
 ) {
     var text by remember(epochDay, tripYear) { mutableStateOf(formatMonthDay(epochDay)) }
-    Column(modifier) {
-        OutlinedTextField(
-            value = text,
-            onValueChange = { raw ->
-                val formatted = formatMonthDayDigitsInput(raw)
-                text = formatted
-                parseMonthDay(formatted, tripYear)?.let { onEpochDayChange(it.toEpochDay()) }
-            },
-            label = { Text(label) },
-            placeholder = { Text("06-25") },
-            modifier = Modifier.fillMaxWidth(),
-            singleLine = true,
-            shape = RectangleShape,
-        )
-        Text(
-            "달력",
-            color = accent,
-            style = MaterialTheme.typography.labelSmall,
-            modifier = Modifier
-                .padding(top = 2.dp)
-                .clickable(onClick = onOpenPicker),
-        )
-    }
+    OutlinedTextField(
+        value = text,
+        onValueChange = { raw ->
+            val formatted = formatMonthDayDigitsInput(raw)
+            text = formatted
+            parseMonthDay(formatted, tripYear)?.let { onEpochDayChange(it.toEpochDay()) }
+        },
+        label = { Text(label) },
+        placeholder = { Text("06-25", color = Color(0xFFCBD5E1)) },
+        modifier = modifier.fillMaxWidth(),
+        singleLine = true,
+        shape = RectangleShape,
+        trailingIcon = {
+            IconButton(onClick = onOpenPicker) {
+                Icon(
+                    Icons.Default.CalendarMonth,
+                    contentDescription = "달력",
+                    tint = Color(0xFF64748B),
+                )
+            }
+        },
+    )
 }
 
 @Composable
@@ -392,9 +433,9 @@ fun TripOverviewPanel(
     modifier: Modifier = Modifier,
 ) {
     SetupLayerFrame(
-        title = "여행 개요",
-        borderColor = Color(0xFF4F46E5),
-        backgroundColor = Color(0xFFEEF2FF),
+        title = null,
+        borderColor = AppMenuStyle.tripOverviewBorder,
+        backgroundColor = AppMenuStyle.tripOverviewBg,
         modifier = modifier,
     ) {
         CityConfirmField(
@@ -406,18 +447,14 @@ fun TripOverviewPanel(
             countryHint = "",
             label = "입국 공항",
             placeholder = "공항명·IATA (예: Marco Polo, VCE)",
-        )
-        Text(
-            "여행 기간 (연도 포함)",
-            style = MaterialTheme.typography.labelMedium,
-            fontWeight = FontWeight.Medium,
-            modifier = Modifier.padding(top = 8.dp, bottom = 4.dp),
+            fieldPaddingVertical = 2.dp,
         )
         TripDateRangeRow(
             startEpochDay = tripStartEpochDay,
             endEpochDay = tripEndEpochDay,
             onStartChange = onTripStartChange,
             onEndChange = onTripEndChange,
+            modifier = Modifier.padding(top = 4.dp),
         )
     }
 }
@@ -500,6 +537,9 @@ fun CityConfirmField(
     countryHint: String,
     label: String,
     placeholder: String? = null,
+    fieldPaddingVertical: androidx.compose.ui.unit.Dp = 2.dp,
+    onRemove: (() -> Unit)? = null,
+    onGlobeClick: (() -> Unit)? = null,
 ) {
     val scope = rememberCoroutineScope()
     val focusRequester = remember { FocusRequester() }
@@ -553,7 +593,11 @@ fun CityConfirmField(
         draft = geo.name
     }
 
-    Column(Modifier.fillMaxWidth().padding(vertical = 6.dp)) {
+    Column(
+        Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 14.dp, vertical = fieldPaddingVertical),
+    ) {
         Box(Modifier.fillMaxWidth()) {
             OutlinedTextField(
                 value = if (point.confirmed) point.name else draft,
@@ -564,25 +608,60 @@ fun CityConfirmField(
                         err = ""
                     }
                 },
-                label = {
-                    Text(if (point.confirmed) "✓ $label" else label)
-                },
+                label = { Text(label, fontSize = CompactFieldLabelSp) },
                 placeholder = {
                     Text(
-                        placeholder ?: "2글자 이상 — 도시·거리·장소 검색",
-                        color = Color(0xFF94A3B8),
+                        placeholder ?: "도시·거리·장소",
+                        color = Color(0xFFCBD5E1),
+                        fontSize = CompactFieldTextSp,
                     )
                 },
+                textStyle = TextStyle(fontSize = CompactFieldTextSp, lineHeight = 15.sp),
                 modifier = Modifier
                     .fillMaxWidth()
+                    .defaultMinSize(minHeight = 40.dp)
                     .focusRequester(focusRequester),
                 readOnly = point.confirmed,
                 singleLine = true,
+                shape = RectangleShape,
+                trailingIcon = {
+                    if (onGlobeClick != null || onRemove != null) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            if (onGlobeClick != null) {
+                                IconButton(
+                                    onClick = onGlobeClick,
+                                    modifier = Modifier.size(32.dp),
+                                ) {
+                                    Text("🌍", fontSize = 16.sp)
+                                }
+                            }
+                            if (onRemove != null) {
+                                IconButton(
+                                    onClick = onRemove,
+                                    modifier = Modifier.size(32.dp),
+                                ) {
+                                    Icon(
+                                        Icons.Default.Close,
+                                        contentDescription = "$label 삭제",
+                                        tint = Color(0xFF1E293B),
+                                        modifier = Modifier.size(18.dp),
+                                    )
+                                }
+                            }
+                        }
+                    }
+                },
             )
             if (point.confirmed) {
+                val trailingPad = when {
+                    onGlobeClick != null && onRemove != null -> 72.dp
+                    onGlobeClick != null || onRemove != null -> 40.dp
+                    else -> 0.dp
+                }
                 Box(
                     Modifier
                         .matchParentSize()
+                        .padding(end = trailingPad)
                         .clickable { beginEdit() },
                 )
             }
@@ -680,6 +759,8 @@ fun LegRouteEditor(
     tripStartBound: Long,
     tripEndBound: Long,
     countryHint: String,
+    arrivalAirport: CityPoint,
+    homeCountryCode: String,
     catalog: GeoCatalog,
     geocoder: NominatimGeocoder,
     onLegChange: (ScheduleLeg) -> Unit,
@@ -689,32 +770,79 @@ fun LegRouteEditor(
 ) {
     val legBorder = if (leg.legConfirmed) Color(0xFF15803D) else Color(0xFFCA8A04)
     val legBg = if (leg.legConfirmed) Color(0xFFF0FDF4) else Color(0xFFFFFBEB)
-    SetupLayerFrame(
-        title = "구간 ${legIndex + 1}",
-        borderColor = legBorder,
-        backgroundColor = legBg,
-        modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
-    ) {
-        Row(
-            Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.End,
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            if (leg.legConfirmed) {
-                Text(
-                    "확정됨",
-                    color = Color(0xFF15803D),
-                    style = MaterialTheme.typography.labelMedium,
-                    modifier = Modifier.padding(end = 4.dp),
-                )
-            }
-            if (canDelete && onDeleteLeg != null) {
-                IconButton(onClick = onDeleteLeg) {
-                    Icon(Icons.Default.Close, contentDescription = "구간 삭제", tint = Color(0xFFDC2626))
-                }
-            }
+    var mapPickSlot by remember { mutableStateOf<LegMapPickSlot?>(null) }
+
+    fun airportCenter(): Pair<Double, Double> =
+        if (arrivalAirport.confirmed && arrivalAirport.lat != 0.0) {
+            arrivalAirport.lat to arrivalAirport.lon
+        } else {
+            catalog.resolveCountry(countryHint)?.let { it.lat to it.lon } ?: (45.0 to 12.0)
         }
 
+    val (mapCenterLat, mapCenterLon) = airportCenter()
+
+    mapPickSlot?.let { slot ->
+        val ctx = legMapPickContext(
+            slot = slot,
+            leg = leg,
+            arrivalAirport = arrivalAirport,
+            fallbackCenter = mapCenterLat to mapCenterLon,
+        )
+        SetupMapPointPickerDialog(
+            visible = true,
+            centerLat = ctx.centerLat,
+            centerLon = ctx.centerLon,
+            initialPickLat = ctx.initialPickLat,
+            initialPickLon = ctx.initialPickLon,
+            referenceLabel = ctx.referenceLabel,
+            referenceIsAirport = ctx.referenceIsAirport,
+            routeMarkers = legRouteMarkers(leg, arrivalAirport),
+            countryHint = countryHint,
+            homeCountryCode = homeCountryCode,
+            geocoder = geocoder,
+            onDismiss = { mapPickSlot = null },
+            onPicked = { cp ->
+                mapPickSlot = null
+                when (slot) {
+                    LegMapPickSlot.Start -> onLegChange(leg.copy(startPoint = cp, legConfirmed = false))
+                    LegMapPickSlot.End -> onLegChange(leg.copy(endPoint = cp, legConfirmed = false))
+                    is LegMapPickSlot.Waypoint -> {
+                        val list = leg.waypoints.toMutableList()
+                        if (slot.index in list.indices) {
+                            list[slot.index] = cp
+                            onLegChange(leg.copy(waypoints = list, legConfirmed = false))
+                        }
+                    }
+                }
+            },
+        )
+    }
+    SetupLayerFrame(
+        title = "지역 ${legIndex + 1}",
+        borderColor = legBorder,
+        backgroundColor = legBg,
+        modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp),
+        titleTrailing = {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                if (leg.legConfirmed) {
+                    Text(
+                        "확정",
+                        color = Color(0xFF15803D),
+                        style = MaterialTheme.typography.labelSmall,
+                        modifier = Modifier.padding(end = 2.dp),
+                    )
+                }
+                if (canDelete && onDeleteLeg != null) {
+                    IconButton(
+                        onClick = onDeleteLeg,
+                        modifier = Modifier.height(32.dp).width(32.dp),
+                    ) {
+                        Icon(Icons.Default.Close, contentDescription = "지역 삭제", tint = Color(0xFFDC2626))
+                    }
+                }
+            }
+        },
+    ) {
         LegMonthDayRangeRow(
             tripYear = tripYear,
             tripStartBound = tripStartBound,
@@ -723,84 +851,404 @@ fun LegRouteEditor(
             endEpochDay = leg.endEpochDay,
             onStartChange = { d -> onLegChange(leg.copy(startEpochDay = d, legConfirmed = false)) },
             onEndChange = { d -> onLegChange(leg.copy(endEpochDay = d, legConfirmed = false)) },
-            modifier = Modifier.padding(bottom = 8.dp),
+            modifier = Modifier.padding(bottom = 4.dp),
         )
 
+        CityConfirmField(
+            point = leg.startPoint,
+            onDraftChange = {},
+            onConfirm = { p -> onLegChange(leg.copy(startPoint = p, legConfirmed = false)) },
+            catalog = catalog,
+            geocoder = geocoder,
+            countryHint = countryHint,
+            label = "출발지",
+            placeholder = "도시·거리·장소",
+            fieldPaddingVertical = 1.dp,
+            onGlobeClick = { mapPickSlot = LegMapPickSlot.Start },
+        )
+
+        leg.waypoints.forEachIndexed { wi, wp ->
             CityConfirmField(
-                point = leg.startPoint,
+                point = wp,
                 onDraftChange = {},
-                onConfirm = { p -> onLegChange(leg.copy(startPoint = p, legConfirmed = false)) },
-                catalog = catalog,
-                geocoder = geocoder,
-                countryHint = countryHint,
-                label = "도보 출발지 (도시·거리·장소)",
-                placeholder = cityPlaceholder,
-            )
-
-            leg.waypoints.forEachIndexed { wi, wp ->
-                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.Top) {
-                    Column(Modifier.weight(1f)) {
-                        Text(
-                            "경유 ${wi + 1}",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = Color.Gray,
-                            modifier = Modifier.padding(top = 4.dp),
-                        )
-                        CityConfirmField(
-                            point = wp,
-                            onDraftChange = {},
-                            onConfirm = { p ->
-                                val list = leg.waypoints.toMutableList()
-                                list[wi] = p
-                                onLegChange(leg.copy(waypoints = list, legConfirmed = false))
-                            },
-                            catalog = catalog,
-                            geocoder = geocoder,
-                            countryHint = countryHint,
-                            label = "경유지 (도시·거리·장소)",
-                            placeholder = cityPlaceholder,
-                        )
-                    }
-                    IconButton(
-                        onClick = {
-                            onLegChange(
-                                leg.copy(
-                                    waypoints = leg.waypoints.filterIndexed { i, _ -> i != wi },
-                                    legConfirmed = false,
-                                ),
-                            )
-                        },
-                        modifier = Modifier.padding(top = 24.dp),
-                    ) {
-                        Icon(Icons.Default.Close, contentDescription = "경유지 삭제")
-                    }
-                }
-            }
-
-            OutlinedButton(
-                onClick = {
-                    onLegChange(leg.copy(waypoints = leg.waypoints + CityPoint(), legConfirmed = false))
+                onConfirm = { p ->
+                    val list = leg.waypoints.toMutableList()
+                    list[wi] = p
+                    onLegChange(leg.copy(waypoints = list, legConfirmed = false))
                 },
-                modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
-            ) {
-                Icon(Icons.Default.Add, contentDescription = null)
-                Text("경유지 추가", modifier = Modifier.padding(start = 6.dp))
-            }
-
-            CityConfirmField(
-                point = leg.endPoint,
-                onDraftChange = {},
-                onConfirm = { p -> onLegChange(leg.copy(endPoint = p, legConfirmed = false)) },
                 catalog = catalog,
                 geocoder = geocoder,
                 countryHint = countryHint,
-            label = "도보 도착지 (도시·거리·장소)",
-            placeholder = cityPlaceholder,
+                label = "경유지",
+                placeholder = "도시·거리·장소",
+                fieldPaddingVertical = 1.dp,
+                onRemove = {
+                    onLegChange(
+                        leg.copy(
+                            waypoints = leg.waypoints.filterIndexed { i, _ -> i != wi },
+                            legConfirmed = false,
+                        ),
+                    )
+                },
+                onGlobeClick = { mapPickSlot = LegMapPickSlot.Waypoint(wi) },
+            )
+        }
+
+        OutlinedButton(
+            onClick = {
+                onLegChange(leg.copy(waypoints = leg.waypoints + CityPoint(), legConfirmed = false))
+            },
+            modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp),
+            shape = RectangleShape,
+            contentPadding = androidx.compose.foundation.layout.PaddingValues(vertical = 6.dp),
+        ) {
+            Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.height(16.dp))
+            Text("경유지 추가", modifier = Modifier.padding(start = 4.dp), style = MaterialTheme.typography.labelLarge)
+        }
+
+        CityConfirmField(
+            point = leg.endPoint,
+            onDraftChange = {},
+            onConfirm = { p -> onLegChange(leg.copy(endPoint = p, legConfirmed = false)) },
+            catalog = catalog,
+            geocoder = geocoder,
+            countryHint = countryHint,
+            label = "도착지",
+            placeholder = "도시·거리·장소",
+            fieldPaddingVertical = 1.dp,
+            onGlobeClick = { mapPickSlot = LegMapPickSlot.End },
         )
     }
 }
 
-/** 1단계 — 도보 구간(leg) 목록 */
+private sealed class LegMapPickSlot {
+    data object Start : LegMapPickSlot()
+    data class Waypoint(val index: Int) : LegMapPickSlot()
+    data object End : LegMapPickSlot()
+}
+
+private fun CityPoint.isConfigured(): Boolean =
+    confirmed && lat != 0.0 && lon != 0.0
+
+private data class LegMapPickContext(
+    val centerLat: Double,
+    val centerLon: Double,
+    val referenceLabel: String,
+    val referenceIsAirport: Boolean,
+    val initialPickLat: Double?,
+    val initialPickLon: Double?,
+)
+
+/** 출발→경유→도착 순서. 해당 칸 이전 중 가장 가까운 확정 지점을 기준·포인터로 사용. */
+private fun legMapPickContext(
+    slot: LegMapPickSlot,
+    leg: ScheduleLeg,
+    arrivalAirport: CityPoint,
+    fallbackCenter: Pair<Double, Double>,
+): LegMapPickContext {
+    val predecessors: List<Pair<CityPoint, Boolean>> = when (slot) {
+        LegMapPickSlot.Start -> listOf(arrivalAirport to true)
+        is LegMapPickSlot.Waypoint -> buildList {
+            for (j in slot.index - 1 downTo 0) {
+                leg.waypoints.getOrNull(j)?.let { add(it to false) }
+            }
+            add(leg.startPoint to false)
+            add(arrivalAirport to true)
+        }
+        LegMapPickSlot.End -> buildList {
+            for (j in leg.waypoints.lastIndex downTo 0) {
+                add(leg.waypoints[j] to false)
+            }
+            add(leg.startPoint to false)
+            add(arrivalAirport to true)
+        }
+    }
+
+    val configuredRef = predecessors.firstOrNull { (pt, _) -> pt.isConfigured() }
+    val refLat: Double
+    val refLon: Double
+    val refLabel: String
+    val refIsAirport: Boolean
+    if (configuredRef != null) {
+        val (pt, isAirport) = configuredRef
+        refLat = pt.lat
+        refLon = pt.lon
+        refLabel = pt.name.ifBlank { if (isAirport) "입국 공항" else "이전 지점" }
+        refIsAirport = isAirport
+    } else {
+        val (lat, lon) = fallbackCenter
+        refLat = lat
+        refLon = lon
+        refLabel = "기준 위치"
+        refIsAirport = false
+    }
+
+    val current: CityPoint? = when (slot) {
+        LegMapPickSlot.Start -> leg.startPoint
+        is LegMapPickSlot.Waypoint -> leg.waypoints.getOrNull(slot.index)
+        LegMapPickSlot.End -> leg.endPoint
+    }
+
+    val (pickLat, pickLon) = if (current?.isConfigured() == true) {
+        current.lat to current.lon
+    } else {
+        refLat to refLon
+    }
+
+    return LegMapPickContext(
+        centerLat = refLat,
+        centerLon = refLon,
+        referenceLabel = refLabel,
+        referenceIsAirport = refIsAirport,
+        initialPickLat = pickLat,
+        initialPickLon = pickLon,
+    )
+}
+
+data class MapRouteMarker(
+    val lat: Double,
+    val lon: Double,
+    val label: String,
+    val kind: String,
+)
+
+private fun legRouteMarkers(leg: ScheduleLeg, arrivalAirport: CityPoint): List<MapRouteMarker> =
+    buildList {
+        if (arrivalAirport.isConfigured()) {
+            add(
+                MapRouteMarker(
+                    lat = arrivalAirport.lat,
+                    lon = arrivalAirport.lon,
+                    label = arrivalAirport.name.ifBlank { "입국 공항" },
+                    kind = "airport",
+                ),
+            )
+        }
+        if (leg.startPoint.isConfigured()) {
+            add(
+                MapRouteMarker(
+                    lat = leg.startPoint.lat,
+                    lon = leg.startPoint.lon,
+                    label = leg.startPoint.name.ifBlank { "출발지" },
+                    kind = "start",
+                ),
+            )
+        }
+        leg.waypoints.forEachIndexed { i, wp ->
+            if (wp.isConfigured()) {
+                add(
+                    MapRouteMarker(
+                        lat = wp.lat,
+                        lon = wp.lon,
+                        label = wp.name.ifBlank { "경유 ${i + 1}" },
+                        kind = "waypoint",
+                    ),
+                )
+            }
+        }
+        if (leg.endPoint.isConfigured()) {
+            add(
+                MapRouteMarker(
+                    lat = leg.endPoint.lat,
+                    lon = leg.endPoint.lon,
+                    label = leg.endPoint.name.ifBlank { "도착지" },
+                    kind = "end",
+                ),
+            )
+        }
+    }
+
+private fun escapeJsonString(raw: String): String =
+    raw.replace("\\", "\\\\").replace("\"", "\\\"").replace("\n", " ")
+
+internal fun routeMarkersJson(markers: List<MapRouteMarker>): String {
+    if (markers.isEmpty()) return "[]"
+    return markers.joinToString(prefix = "[", postfix = "]") { m ->
+        """{"lat":${m.lat},"lon":${m.lon},"label":"${escapeJsonString(m.label)}","kind":"${m.kind}"}"""
+    }
+}
+
+private fun looksLikeCoordinates(name: String): Boolean =
+    name.matches(Regex("""^-?\d+\.\d+,\s*-?\d+\.\d+$"""))
+
+private suspend fun resolvePlaceLabel(
+    context: Context,
+    geocoder: NominatimGeocoder,
+    lat: Double,
+    lon: Double,
+    language: String,
+): String {
+    runCatching { geocoder.reverse(lat, lon, language = language) }.getOrNull()?.let { geo ->
+        labelFromGeo(geo)?.let { return it }
+    }
+    LocalAdminGeocoder.reverseLabel(context, lat, lon)?.takeIf { it.isNotBlank() }?.let { return it }
+    return "%.4f, %.4f".format(lat, lon)
+}
+
+private fun labelFromGeo(geo: GeoResult): String? {
+    geo.adminPlaceLabel().takeIf { it.isNotBlank() }?.let { return it }
+    geo.name.takeIf { it.isNotBlank() && !looksLikeCoordinates(it) }?.let { return it }
+    geo.description.takeIf { it.isNotBlank() }?.let { return it }
+    return geo.displayName.split(",").take(3).joinToString(" · ").trim().takeIf { it.isNotBlank() }
+}
+
+@Composable
+fun SetupMapPointPickerDialog(
+    visible: Boolean,
+    centerLat: Double,
+    centerLon: Double,
+    initialPickLat: Double? = null,
+    initialPickLon: Double? = null,
+    referenceLabel: String = "입국 공항",
+    referenceIsAirport: Boolean = true,
+    routeMarkers: List<MapRouteMarker> = emptyList(),
+    countryHint: String,
+    homeCountryCode: String,
+    geocoder: NominatimGeocoder,
+    onDismiss: () -> Unit,
+    onPicked: (CityPoint) -> Unit,
+) {
+    if (!visible) return
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    val homeLang = HomeLanguage.langTag(homeCountryCode.ifBlank { "KR" })
+    val markersJson = remember(routeMarkers) { routeMarkersJson(routeMarkers) }
+    var pickLatLon by remember(centerLat, centerLon, initialPickLat, initialPickLon) {
+        mutableStateOf(
+            if (initialPickLat != null && initialPickLon != null) initialPickLat to initialPickLon else null,
+        )
+    }
+    var pickLabel by remember { mutableStateOf("") }
+    var resolvingLabel by remember { mutableStateOf(false) }
+    var resolving by remember { mutableStateOf(false) }
+
+    LaunchedEffect(pickLatLon) {
+        val (lat, lon) = pickLatLon ?: run {
+            resolvingLabel = false
+            return@LaunchedEffect
+        }
+        resolvingLabel = true
+        delay(320)
+        pickLabel = resolvePlaceLabel(context, geocoder, lat, lon, homeLang)
+        resolvingLabel = false
+    }
+
+    LaunchedEffect(initialPickLat, initialPickLon) {
+        if (initialPickLat != null && initialPickLon != null && pickLatLon == null) {
+            pickLatLon = initialPickLat to initialPickLon
+        }
+    }
+
+    Dialog(
+        onDismissRequest = onDismiss,
+        properties = DialogProperties(usePlatformDefaultWidth = false),
+    ) {
+        val dialogWindow = (LocalView.current.parent as? DialogWindowProvider)?.window
+        DisposableEffect(dialogWindow) {
+            dialogWindow?.setWindowAnimations(0)
+            onDispose { }
+        }
+        Surface(
+            shape = RoundedCornerShape(12.dp),
+            color = AppMenuStyle.card,
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 12.dp),
+        ) {
+            Column(Modifier.padding(16.dp)) {
+                Text("지도에서 선택", fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.titleMedium)
+                Text(
+                    if (referenceIsAirport) {
+                        "지도를 탭해 위치를 지정하세요 · ✈ = $referenceLabel"
+                    } else {
+                        "지도를 탭해 위치를 지정하세요 · 녹색 = $referenceLabel"
+                    },
+                    style = MaterialTheme.typography.labelSmall,
+                    color = Color(0xFF64748B),
+                    modifier = Modifier.padding(top = 4.dp),
+                )
+                if (routeMarkers.isNotEmpty()) {
+                    Text(
+                        "✈ 공항 · 출 출발 · 숫자 경유 · 도 도착 — 한 화면에 표시",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = Color(0xFF64748B),
+                        modifier = Modifier.padding(top = 2.dp),
+                    )
+                }
+                Box(
+                    Modifier
+                        .fillMaxWidth()
+                        .height(48.dp)
+                        .padding(top = 4.dp),
+                    contentAlignment = Alignment.CenterStart,
+                ) {
+                    when {
+                        pickLabel.isNotBlank() -> {
+                            Text(
+                                pickLabel,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = AppMenuStyle.text,
+                                maxLines = 2,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                        }
+                        resolvingLabel && pickLatLon != null -> {
+                            Text(
+                                "지명 찾는 중…",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = AppMenuStyle.muted,
+                            )
+                        }
+                        pickLatLon != null -> {
+                            val (lat, lon) = pickLatLon!!
+                            Text(
+                                "%.5f, %.5f".format(lat, lon),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = AppMenuStyle.muted,
+                            )
+                        }
+                    }
+                }
+                Spacer(Modifier.height(4.dp))
+                LeafletMapPickerView(
+                    centerLat = centerLat,
+                    centerLon = centerLon,
+                    initialPickLat = initialPickLat,
+                    initialPickLon = initialPickLon,
+                    referenceLabel = referenceLabel,
+                    referenceIsAirport = referenceIsAirport,
+                    routeMarkersJson = markersJson,
+                    onCoordinatesPicked = { lat, lon -> pickLatLon = lat to lon },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(320.dp),
+                )
+                Row(
+                    Modifier.fillMaxWidth().padding(top = 12.dp),
+                    horizontalArrangement = Arrangement.End,
+                ) {
+                    TextButton(onClick = onDismiss) { Text("취소") }
+                    TextButton(
+                        enabled = pickLatLon != null && !resolving && !resolvingLabel,
+                        onClick = {
+                            val (lat, lon) = pickLatLon ?: return@TextButton
+                            scope.launch {
+                                resolving = true
+                                val label = pickLabel.ifBlank {
+                                    resolvePlaceLabel(context, geocoder, lat, lon, homeLang)
+                                }
+                                onPicked(CityPoint(name = label, lat = lat, lon = lon, confirmed = true))
+                                resolving = false
+                            }
+                        },
+                    ) { Text(if (resolving) "확인 중…" else "확인") }
+                }
+            }
+        }
+    }
+}
+
+/** 1단계 — 하이킹 지역(leg) 목록 */
 @Composable
 fun ScheduleLegsVerticalList(
     legs: List<ScheduleLeg>,
@@ -808,6 +1256,8 @@ fun ScheduleLegsVerticalList(
     tripStartBound: Long,
     tripEndBound: Long,
     destCountry: String,
+    arrivalAirport: CityPoint,
+    homeCountryCode: String,
     catalog: GeoCatalog,
     geocoder: NominatimGeocoder,
     onLegChange: (Int, ScheduleLeg) -> Unit,
@@ -817,72 +1267,81 @@ fun ScheduleLegsVerticalList(
     cityPlaceholder: String? = null,
 ) {
     val listScroll = rememberScrollState()
+    var lastLegCount by remember { mutableIntStateOf(legs.size) }
     LaunchedEffect(legs.size) {
-        if (legs.size > 0) {
+        if (legs.size > lastLegCount) {
+            lastLegCount = legs.size
+            delay(80)
             listScroll.animateScrollTo(listScroll.maxValue)
+        } else {
+            lastLegCount = legs.size
         }
     }
 
     Column(modifier.fillMaxSize()) {
         Row(
-            Modifier.fillMaxWidth(),
+            Modifier.fillMaxWidth().padding(bottom = 4.dp),
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Text(
-                if (legs.isEmpty()) "도보 구간" else "도보 구간 · ${legs.size}개",
+                if (legs.isEmpty()) "하이킹 지역" else "하이킹 지역 · ${legs.size}개",
                 fontWeight = FontWeight.SemiBold,
                 color = AppMenuStyle.text,
             )
-            OutlinedButton(onClick = onAddLeg, shape = RectangleShape) {
-                Icon(Icons.Default.Add, contentDescription = null)
-                Text("구간 추가", modifier = Modifier.padding(start = 4.dp))
+            OutlinedButton(
+                onClick = onAddLeg,
+                shape = RectangleShape,
+                contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 10.dp, vertical = 4.dp),
+            ) {
+                Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.height(16.dp))
+                Text("지역 추가", modifier = Modifier.padding(start = 4.dp), style = MaterialTheme.typography.labelLarge)
             }
         }
-        Text(
-            if (legs.isEmpty()) {
-                "「구간 추가」로 출발→경유→도착 도보 코스를 넣어 주세요."
-            } else {
-                "구간마다 출발→경유→도착. 날짜는 월-일만 입력 (연도는 여행 개요 기준)."
-            },
-            style = MaterialTheme.typography.labelSmall,
-            color = AppMenuStyle.muted,
-            modifier = Modifier.padding(bottom = 8.dp),
-        )
-        Column(
+        Box(
             Modifier
                 .weight(1f)
-                .fillMaxWidth()
-                .verticalScroll(listScroll)
-                .graphicsLayer { clip = false },
-            verticalArrangement = Arrangement.spacedBy(10.dp),
+                .fillMaxWidth(),
         ) {
-            legs.forEachIndexed { idx, leg ->
-                Column(
-                    Modifier
-                        .fillMaxWidth()
-                        .graphicsLayer { clip = false },
-                ) {
-                    LegRouteEditor(
-                        leg = leg,
-                        legIndex = idx,
-                        tripYear = tripYear,
-                        tripStartBound = tripStartBound,
-                        tripEndBound = tripEndBound,
-                        countryHint = destCountry,
-                        catalog = catalog,
-                        geocoder = geocoder,
-                        onLegChange = { updated -> onLegChange(idx, updated) },
-                        onDeleteLeg = { onDeleteLeg(idx) },
-                        canDelete = true,
-                        cityPlaceholder = cityPlaceholder,
-                    )
-                    if (isLegReady(leg) && !leg.legConfirmed) {
-                        Button(
-                            onClick = { onLegChange(idx, leg.copy(legConfirmed = true)) },
-                            modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp, vertical = 4.dp),
-                            shape = RectangleShape,
-                        ) { Text("이 구간 확정") }
+            Column(
+                Modifier
+                    .fillMaxSize()
+                    .verticalScroll(listScroll)
+                    .background(AppMenuStyle.scroll, RoundedCornerShape(8.dp))
+                    .padding(horizontal = 6.dp, vertical = 4.dp)
+                    .graphicsLayer { clip = false },
+                verticalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
+                legs.forEachIndexed { idx, leg ->
+                    Column(
+                        Modifier
+                            .fillMaxWidth()
+                            .graphicsLayer { clip = false },
+                    ) {
+                        LegRouteEditor(
+                            leg = leg,
+                            legIndex = idx,
+                            tripYear = tripYear,
+                            tripStartBound = tripStartBound,
+                            tripEndBound = tripEndBound,
+                            countryHint = destCountry,
+                            arrivalAirport = arrivalAirport,
+                            homeCountryCode = homeCountryCode,
+                            catalog = catalog,
+                            geocoder = geocoder,
+                            onLegChange = { updated -> onLegChange(idx, updated) },
+                            onDeleteLeg = { onDeleteLeg(idx) },
+                            canDelete = true,
+                            cityPlaceholder = cityPlaceholder,
+                        )
+                        if (isLegReady(leg) && !leg.legConfirmed) {
+                            Button(
+                                onClick = { onLegChange(idx, leg.copy(legConfirmed = true)) },
+                                modifier = Modifier.fillMaxWidth().padding(horizontal = 2.dp, vertical = 2.dp),
+                                shape = RectangleShape,
+                                contentPadding = androidx.compose.foundation.layout.PaddingValues(vertical = 6.dp),
+                            ) { Text("이 지역 확정", style = MaterialTheme.typography.labelLarge) }
+                        }
                     }
                 }
             }
@@ -896,20 +1355,37 @@ fun isLegReady(leg: ScheduleLeg): Boolean =
         leg.waypoints.all { it.name.isBlank() || it.confirmed }
 
 fun buildStopsFromLegs(legs: List<ScheduleLeg>): List<com.mcpauto.walkingofflineguide.data.CityStop> {
-    val out = linkedMapOf<String, com.mcpauto.walkingofflineguide.data.CityStop>()
-    legs.filter { it.legConfirmed }.forEach { leg ->
-        listOf(leg.startPoint).plus(leg.waypoints).plus(leg.endPoint)
-            .filter { it.confirmed && it.name.isNotBlank() }
-            .forEach { p ->
-                out[p.name] = com.mcpauto.walkingofflineguide.data.CityStop(
-                    name = p.name,
-                    lat = p.lat,
-                    lon = p.lon,
-                    radiusKm = com.mcpauto.walkingofflineguide.data.STOP_DOWNLOAD_RADIUS_KM,
-                )
+    val radius = com.mcpauto.walkingofflineguide.data.STOP_DOWNLOAD_RADIUS_KM
+    return legs.filter { it.legConfirmed }.mapIndexedNotNull { idx, leg ->
+        val path = buildList {
+            if (leg.startPoint.confirmed && leg.startPoint.lat != 0.0) {
+                add(leg.startPoint.lat to leg.startPoint.lon)
             }
+            leg.waypoints.filter { it.confirmed && it.lat != 0.0 }.forEach { add(it.lat to it.lon) }
+            if (leg.endPoint.confirmed && leg.endPoint.lat != 0.0) {
+                add(leg.endPoint.lat to leg.endPoint.lon)
+            }
+        }
+        if (path.isEmpty()) return@mapIndexedNotNull null
+        val bbox = PoiLogic.corridorBboxForPath(path, radius)
+        val centerLat = path.map { it.first }.average()
+        val centerLon = path.map { it.second }.average()
+        val via = leg.waypoints.filter { it.confirmed }.joinToString("→") { it.name.take(8) }
+        val label = buildString {
+            append("지역${idx + 1} ")
+            append(leg.startPoint.name.take(12))
+            if (via.isNotBlank()) append("→$via")
+            append("→")
+            append(leg.endPoint.name.take(12))
+        }
+        com.mcpauto.walkingofflineguide.data.CityStop(
+            name = label.trim(),
+            lat = centerLat,
+            lon = centerLon,
+            radiusKm = radius,
+            customBbox = bbox,
+        )
     }
-    return out.values.toList()
 }
 
 fun scheduleSummary(legs: List<ScheduleLeg>, destCountry: String): String =

@@ -27,8 +27,8 @@ class RoutingGraph private constructor(
 
     fun route(fromLat: Double, fromLon: Double, toLat: Double, toLon: Double): List<Pair<Double, Double>> {
         if (nodes.isEmpty()) return listOf(fromLat to fromLon, toLat to toLon)
-        val start = nearestNode(fromLat, fromLon, maxM = 2_500.0) ?: return listOf(fromLat to fromLon, toLat to toLon)
-        val goal = nearestNode(toLat, toLon, maxM = 2_500.0) ?: return listOf(fromLat to fromLon, toLat to toLon)
+        val start = nearestNode(fromLat, fromLon, maxM = 4_000.0) ?: return listOf(fromLat to fromLon, toLat to toLon)
+        val goal = nearestNode(toLat, toLon, maxM = 4_000.0) ?: return listOf(fromLat to fromLon, toLat to toLon)
         if (start == goal) return listOf(fromLat to fromLon, nodes[start].first to nodes[start].second, toLat to toLon)
 
         val dist = IntArray(nodes.size) { Int.MAX_VALUE }

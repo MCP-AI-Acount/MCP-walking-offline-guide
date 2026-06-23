@@ -40,6 +40,41 @@ object PoiLogic {
         )
     }
 
+    fun mergeBbox(a: Bbox, b: Bbox): Bbox = Bbox(
+        south = minOf(a.south, b.south),
+        north = maxOf(a.north, b.north),
+        west = minOf(a.west, b.west),
+        east = maxOf(a.east, b.east),
+    )
+
+    /** 출발→경유→도착 직선 구간을 radiusKm 폭으로 덮는 bbox */
+    fun corridorBboxForPath(points: List<Pair<Double, Double>>, radiusKm: Double): Bbox {
+        if (points.isEmpty()) return Bbox()
+        if (points.size == 1) return bboxAround(points[0].first, points[0].second, radiusKm)
+        var merged = bboxAround(points[0].first, points[0].second, radiusKm)
+        for (i in 0 until points.size - 1) {
+            merged = mergeBbox(merged, corridorBboxForSegment(points[i], points[i + 1], radiusKm))
+        }
+        return merged
+    }
+
+    private fun corridorBboxForSegment(
+        a: Pair<Double, Double>,
+        b: Pair<Double, Double>,
+        radiusKm: Double,
+    ): Bbox {
+        val distM = haversineM(a.first, a.second, b.first, b.second)
+        val steps = (distM / 1000.0).toInt().coerceIn(1, 40)
+        var merged = bboxAround(a.first, a.second, radiusKm)
+        for (i in 0..steps) {
+            val t = i.toDouble() / steps
+            val lat = a.first + (b.first - a.first) * t
+            val lon = a.second + (b.second - a.second) * t
+            merged = mergeBbox(merged, bboxAround(lat, lon, radiusKm))
+        }
+        return mergeBbox(merged, bboxAround(b.first, b.second, radiusKm))
+    }
+
     fun withinRadiusKm(pois: List<Poi>, lat: Double?, lon: Double?, radiusKm: Double): List<Poi> {
         if (radiusKm <= 0.0) return emptyList()
         if (lat == null || lon == null) return pois

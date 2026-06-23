@@ -22,6 +22,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.compose.foundation.BorderStroke
 import com.mcpauto.walkingofflineguide.data.Poi
 import com.mcpauto.walkingofflineguide.logic.PoiLogic
@@ -40,7 +41,8 @@ fun StarRating(rating: Float, modifier: Modifier = Modifier) {
     Text(
         "$stars ${"%.1f".format(clamped)}",
         color = Color(0xFFF59E0B),
-        style = MaterialTheme.typography.labelSmall,
+        fontSize = 22.sp,
+        lineHeight = 24.sp,
         modifier = modifier,
     )
 }
@@ -74,7 +76,7 @@ fun PoiListItem(
                 },
             ),
         shape = RoundedCornerShape(10.dp),
-        colors = CardDefaults.cardColors(containerColor = Color.White),
+        colors = CardDefaults.cardColors(containerColor = Color(0xFFF7FAF2)),
     ) {
         Row(modifier = Modifier.padding(horizontal = 8.dp, vertical = 6.dp), verticalAlignment = Alignment.Top) {
             Column(modifier = Modifier.weight(1f)) {
