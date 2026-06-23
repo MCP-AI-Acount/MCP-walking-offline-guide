@@ -7,10 +7,14 @@ import android.os.Build
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
@@ -60,7 +64,9 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.zIndex
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.text.font.FontWeight
@@ -71,10 +77,14 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.zIndex
 import androidx.core.content.ContextCompat
 import com.mcpauto.walkingofflineguide.map.MapUiColors
+import com.mcpauto.walkingofflineguide.data.CrashRecovery
 import com.mcpauto.walkingofflineguide.data.DownloadJobState
 import com.mcpauto.walkingofflineguide.data.GeoCatalog
 import com.mcpauto.walkingofflineguide.data.RegionRecord
 import com.mcpauto.walkingofflineguide.data.ScheduleLeg
+import com.mcpauto.walkingofflineguide.data.defaultScheduleLeg
+import com.mcpauto.walkingofflineguide.data.normalizeLegDates
+import com.mcpauto.walkingofflineguide.data.tripEpochRangeFromLegs
 import com.mcpauto.walkingofflineguide.data.TripConfig
 import com.mcpauto.walkingofflineguide.data.TripStore
 import com.mcpauto.walkingofflineguide.data.isInTripPeriod
@@ -83,6 +93,8 @@ import com.mcpauto.walkingofflineguide.download.DownloadEvent
 import com.mcpauto.walkingofflineguide.download.DownloadSession
 import com.mcpauto.walkingofflineguide.download.RegionDownloadForegroundService
 import com.mcpauto.walkingofflineguide.download.DownloadProgress
+import com.mcpauto.walkingofflineguide.download.DownloadProgressReader
+import com.mcpauto.walkingofflineguide.download.HomeProgressiveDownloader
 import com.mcpauto.walkingofflineguide.download.RegionDownloadManager
 import com.mcpauto.walkingofflineguide.logic.LocationHelper
 import com.mcpauto.walkingofflineguide.logic.MapAppPolicy
@@ -93,6 +105,8 @@ import com.mcpauto.walkingofflineguide.network.NominatimGeocoder
 import com.mcpauto.walkingofflineguide.network.WifiGate
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.Dispatchers
 import java.time.LocalDate
 
 private sealed class AppScreen {
@@ -100,7 +114,7 @@ private sealed class AppScreen {
     data object Hub : AppScreen()
     data object BasicSetup : AppScreen()
     data class TravelSetup(val resumeDownload: Boolean = false) : AppScreen()
-    data class Map(val regionId: String, val simulated: Boolean = false) : AppScreen()
+    data class Map(val regionId: String) : AppScreen()
 }
 
 @Composable
@@ -119,17 +133,34 @@ fun WalkingApp() {
     var showNoWifiDialog by remember { mutableStateOf(false) }
     var showOptions by remember { mutableStateOf(false) }
     var showExitConfirm by remember { mutableStateOf(false) }
-    var showMoveConfirm by remember { mutableStateOf<RegionRecord?>(null) }
     var highlightId by remember { mutableStateOf<String?>(null) }
     var blinkHighlight by remember { mutableStateOf(false) }
     var showNeedTravelSetup by remember { mutableStateOf(false) }
     var policyNotice by remember { mutableStateOf<String?>(null) }
     var pendingDownloadJob by remember { mutableStateOf<DownloadJobState?>(null) }
     var showResetBasicConfirm by remember { mutableStateOf(false) }
-    var dropdownExpanded by remember { mutableStateOf(false) }
     val listState = rememberLazyListState()
 
     var lastGps by remember { mutableStateOf<Pair<Double, Double>?>(null) }
+    var bootOverrideHub by remember { mutableStateOf(CrashRecovery.shouldSafeStart(context)) }
+    var recoveryBanner by remember { mutableStateOf<String?>(null) }
+    var showLoadingActions by remember { mutableStateOf(false) }
+
+    var downloadRunning by remember { mutableStateOf(DownloadSession.running.value) }
+    LaunchedEffect(Unit) {
+        DownloadSession.running.collect { downloadRunning = it }
+    }
+
+    LaunchedEffect(screen) {
+        if (screen is AppScreen.Hub) {
+            withContext(Dispatchers.IO) {
+                val loadedRegions = store.loadRegions()
+                val job = store.loadDownloadJob()
+                regions = loadedRegions
+                pendingDownloadJob = job
+            }
+        }
+    }
 
     fun routeByPolicy(
         cfg: TripConfig,
@@ -147,7 +178,7 @@ fun WalkingApp() {
         return when (decision.policy) {
             MapAppPolicy.HOME_LIVE -> {
                 MapPolicy.homeLiveRegion(cfg, regs, gpsLat, gpsLon)?.let {
-                    AppScreen.Map(it.id, simulated = false)
+                    AppScreen.Map(it.id)
                 } ?: run {
                     showNeedTravelSetup = true
                     AppScreen.Hub
@@ -155,7 +186,7 @@ fun WalkingApp() {
             }
             MapAppPolicy.TRAVEL -> {
                 MapPolicy.travelRegion(cfg, regs, gpsLat, gpsLon, hasGpsFix)?.let {
-                    AppScreen.Map(it.id, simulated = false)
+                    AppScreen.Map(it.id)
                 } ?: AppScreen.Hub
             }
             MapAppPolicy.NEED_TRAVEL_SETUP -> {
@@ -176,47 +207,64 @@ fun WalkingApp() {
     }
 
     LaunchedEffect(Unit) {
-        loadingMessage = "데이터 소모가 큽니다.\n가능한 WiFi가 있는 곳에서 실행해 주세요."
-        delay(1200)
-        config = store.loadConfig()
-        if (config.homeCountry.isNotBlank() && !config.basicSetupComplete) {
-            config = config.copy(basicSetupComplete = true)
-            store.saveConfig(config)
-        }
-        regions = store.loadRegions()
-        pendingDownloadJob = store.loadDownloadJob()
-        loadingDetail = store.todayCityDescription(config, regions)
-        if (ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_FINE_LOCATION) ==
-            PackageManager.PERMISSION_GRANTED
-        ) {
-            runCatching {
-                val fix = locationHelper.acquirePosition()
-                lastGps = fix.lat to fix.lon
-                if (config.homeLat == 0.0) {
-                    config = config.copy(homeLat = fix.lat, homeLon = fix.lon)
-                    store.saveConfig(config)
+        showLoadingActions = false
+        loadingMessage = "WiFi가 있으면 데이터 사용이 적습니다."
+        loadingDetail = ""
+        delay(500)
+        showLoadingActions = true
+        try {
+            delay(400)
+            config = store.loadConfig()
+            if (config.homeCountry.isNotBlank() && !config.basicSetupComplete) {
+                config = config.copy(basicSetupComplete = true)
+                store.saveConfig(config)
+            }
+            regions = store.loadRegions()
+            pendingDownloadJob = store.loadDownloadJob()
+            loadingDetail = store.todayCityDescription(config, regions)
+            if (ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_FINE_LOCATION) ==
+                PackageManager.PERMISSION_GRANTED
+            ) {
+                runCatching {
+                    val fix = locationHelper.acquirePosition()
+                    lastGps = fix.lat to fix.lon
+                    if (config.homeLat == 0.0) {
+                        config = config.copy(homeLat = fix.lat, homeLon = fix.lon)
+                        store.saveConfig(config)
+                    }
                 }
             }
-        }
-        delay(1500)
-        val hasInternet = WifiGate.hasInternet(context)
-        val gps = lastGps
-        val hasGpsFix = gps != null
-        if (!hasInternet && hasGpsFix && gps != null &&
-            TripNavigation.isAtHomeCountry(config, gps.first, gps.second)
-        ) {
-            policyNotice = "WiFi/인터넷 없음 — 일반 지도 대신 여행 오프라인 모드로 시작합니다."
-        }
-        screen = routeByPolicy(
-            config, regions, pendingDownloadJob, gps?.first, gps?.second, hasGpsFix, hasInternet,
-        )
-        if (screen is AppScreen.Hub && hasGpsFix && gps != null &&
-            TripNavigation.isAtHomeCountry(config, gps.first, gps.second)
-        ) {
-            highlightId = TripNavigation.resolveHomeMapRegion(config, regions, gps.first, gps.second)?.id
+            val hasInternet = WifiGate.hasInternet(context)
+            val gps = lastGps
+            val hasGpsFix = gps != null
+            if (!hasInternet && hasGpsFix && gps != null &&
+                TripNavigation.isAtHomeCountry(config, gps.first, gps.second)
+            ) {
+                policyNotice = "WiFi/인터넷 없음 — 오프라인 모드로 시작합니다."
+            }
+            if (bootOverrideHub) {
+                if (recoveryBanner == null && CrashRecovery.shouldSafeStart(context)) {
+                    recoveryBanner = "이전 실행 중 오류가 있어 메인 메뉴로 시작합니다."
+                }
+                screen = AppScreen.Hub
+            } else {
+                screen = routeByPolicy(
+                    config, regions, pendingDownloadJob, gps?.first, gps?.second, hasGpsFix, hasInternet,
+                )
+            }
+            if (screen is AppScreen.Hub && hasGpsFix && gps != null &&
+                TripNavigation.isAtHomeCountry(config, gps.first, gps.second)
+            ) {
+                highlightId = TripNavigation.resolveHomeMapRegion(config, regions, gps.first, gps.second)?.id
+            }
+            CrashRecovery.clear(context)
+        } catch (_: Exception) {
+            recoveryBanner = "시작 중 문제가 있어 메인 메뉴로 엽니다."
+            screen = AppScreen.Hub
         }
     }
 
+    Box(Modifier.fillMaxSize()) {
     policyNotice?.let { notice ->
         AlertDialog(
             onDismissRequest = { policyNotice = null },
@@ -276,51 +324,14 @@ fun WalkingApp() {
         )
     }
 
-    showMoveConfirm?.let { target ->
-        AlertDialog(
-            onDismissRequest = { showMoveConfirm = null },
-            title = { Text("${target.cityName}으로 이동") },
-            text = { Text("해당 도시로 이동하시겠습니까?\n(GPS 위치는 유지됩니다)") },
-            confirmButton = {
-                TextButton(onClick = {
-                    showMoveConfirm = null
-                    scope.launch {
-                        store.saveRegion(target.copy(visited = true))
-                        regions = store.loadRegions()
-                    }
-                    screen = AppScreen.Map(target.id, simulated = false)
-                }) { Text("이동") }
-            },
-            dismissButton = { TextButton(onClick = { showMoveConfirm = null }) { Text("취소") } },
-        )
-    }
-
-    if (showOptions) {
-        OptionsScreen(
-            config = config,
-            onDismiss = { showOptions = false },
-            onConfirm = { updated ->
-                scope.launch {
-                    config = updated
-                    store.saveConfig(updated)
-                    showOptions = false
-                }
-            },
-            onDeleteAllMaps = {
-                scope.launch {
-                    store.deleteAllMapData()
-                    regions = emptyList()
-                    pendingDownloadJob = null
-                    showOptions = false
-                }
-            },
-            onResetBasic = { showResetBasicConfirm = true },
-            onExit = { (context as? Activity)?.finish() },
-            onMain = {
-                showOptions = false
-                screen = AppScreen.Hub
-            },
-        )
+    fun openHubRegionMap(target: RegionRecord) {
+        highlightId = target.id
+        blinkHighlight = false
+        scope.launch {
+            store.saveRegion(target.copy(visited = true))
+            regions = store.loadRegions()
+        }
+        screen = AppScreen.Map(target.id)
     }
 
     if (showExitConfirm) {
@@ -333,6 +344,200 @@ fun WalkingApp() {
             },
             dismissButton = { TextButton(onClick = { showExitConfirm = false }) { Text("취소") } },
         )
+    }
+
+    when (val s = screen) {
+        AppScreen.Loading -> LoadingMenuShell(
+            subtitle = loadingMessage,
+            detail = loadingDetail,
+            showActions = showLoadingActions,
+            onMain = {
+                bootOverrideHub = true
+                screen = AppScreen.Hub
+            },
+            onOptions = { showOptions = true },
+        )
+        AppScreen.BasicSetup -> BasicSetupScreen(
+            initial = config,
+            store = store,
+            locationHelper = locationHelper,
+            geocoder = geocoder,
+            onOpenOptions = { showOptions = true },
+            onDone = { updated ->
+                scope.launch {
+                    config = updated
+                    store.saveConfig(updated)
+                    screen = AppScreen.Hub
+                }
+            },
+        )
+        is AppScreen.TravelSetup -> TravelSetupScreen(
+            initial = config,
+            resumeJob = if (s.resumeDownload) pendingDownloadJob else null,
+            store = store,
+            geocoder = geocoder,
+            onOpenOptions = { showOptions = true },
+            onDone = { updated, newRegions, firstRegion ->
+                config = updated
+                regions = newRegions
+                pendingDownloadJob = null
+                if (firstRegion != null) {
+                    screen = AppScreen.Map(firstRegion.id)
+                } else {
+                    screen = AppScreen.Hub
+                }
+            },
+            onCancel = { screen = AppScreen.Hub },
+            onGoMain = { screen = AppScreen.Hub },
+            onJobUpdated = { pendingDownloadJob = it },
+            onRegionImported = { imported ->
+                scope.launch {
+                    regions = store.loadRegions()
+                    pendingDownloadJob = store.loadDownloadJob()
+                    highlightId = imported.id
+                }
+            },
+        )
+        AppScreen.Hub -> HubScreen(
+            config = config,
+            regions = regions,
+            pendingDownloadJob = pendingDownloadJob,
+            downloadRunning = downloadRunning,
+            highlightId = highlightId,
+            blinkHighlight = blinkHighlight,
+            recoveryBanner = recoveryBanner,
+            listState = listState,
+            onRegionMapTap = { r -> openHubRegionMap(r) },
+            onRegionSelect = { r -> openHubRegionMap(r) },
+            onSchedule = {
+                screen = if (config.basicSetupComplete) {
+                    AppScreen.TravelSetup(resumeDownload = pendingDownloadJob?.active == true)
+                } else {
+                    AppScreen.BasicSetup
+                }
+            },
+            onResumeDownload = {
+                screen = AppScreen.TravelSetup(resumeDownload = true)
+            },
+            onDeleteCity = { regionId ->
+                scope.launch {
+                    if (downloadRunning) {
+                        RegionDownloadForegroundService.cancel(context)
+                        delay(400)
+                    }
+                    withContext(Dispatchers.IO) { store.deleteRegion(regionId) }
+                    regions = store.loadRegions()
+                    pendingDownloadJob = store.loadDownloadJob()
+                    if (highlightId == regionId) highlightId = null
+                }
+            },
+            onRedownloadCity = { regionId ->
+                scope.launch {
+                    if (downloadRunning) {
+                        RegionDownloadForegroundService.cancel(context)
+                        delay(400)
+                    }
+                    withContext(Dispatchers.IO) { store.deleteRegion(regionId) }
+                    regions = store.loadRegions()
+                    pendingDownloadJob = store.loadDownloadJob()
+                    if (highlightId == regionId) highlightId = null
+                    screen = AppScreen.TravelSetup(resumeDownload = true)
+                }
+            },
+            onCurrentRegion = {
+                scope.launch {
+                    val gps = runCatching { locationHelper.acquirePosition() }.getOrNull()
+                    if (gps != null) {
+                        lastGps = gps.lat to gps.lon
+                    }
+                    val fix = lastGps ?: return@launch
+                    val hasNet = WifiGate.hasInternet(context)
+                    if (!hasNet) return@launch
+                    when {
+                        TripNavigation.isAtHomeCountry(config, fix.first, fix.second) -> {
+                            val region = MapPolicy.homeLiveRegion(config, regions, fix.first, fix.second)
+                                ?: MapPolicy.onlineHomeStub(config, fix.first, fix.second)
+                            screen = AppScreen.Map(region.id)
+                        }
+                        TripNavigation.isAtDestinationCountry(config, regions, fix.first, fix.second) ||
+                            MapPolicy.travelRegion(
+                                config, regions, fix.first, fix.second, hasGpsFix = true,
+                            ) != null -> {
+                            val region = MapPolicy.travelRegion(
+                                config, regions, fix.first, fix.second, hasGpsFix = true,
+                            ) ?: regions.filter { it.downloadComplete }
+                                .filter { !TripNavigation.isHomeRegion(config, it) }
+                                .minByOrNull {
+                                    com.mcpauto.walkingofflineguide.logic.PoiLogic.haversineM(
+                                        fix.first, fix.second, it.lat, it.lon,
+                                    )
+                                }
+                            region?.let { screen = AppScreen.Map(it.id) }
+                        }
+                    }
+                }
+            },
+            showCurrentRegion = WifiGate.hasInternet(context) &&
+                config.basicSetupComplete &&
+                (
+                    config.homeCountry.isNotBlank() ||
+                        regions.any { it.downloadComplete && !TripNavigation.isHomeRegion(config, it) }
+                    ),
+            onOptions = { showOptions = true },
+            onExit = { showExitConfirm = true },
+            store = store,
+            onRegionImported = { imported ->
+                scope.launch {
+                    regions = store.loadRegions()
+                    pendingDownloadJob = store.loadDownloadJob()
+                    highlightId = imported.id
+                }
+            },
+        )
+        is AppScreen.Map -> {
+            val gps = lastGps
+            val region = regions.find { it.id == s.regionId }
+                ?: if (s.regionId == MapPolicy.HOME_LIVE_ONLINE_ID && gps != null) {
+                    MapPolicy.onlineHomeStub(config, gps.first, gps.second)
+                } else {
+                    null
+                }
+            if (region == null) {
+                screen = AppScreen.Hub
+            } else {
+                MapGuideScreen(
+                    region = region,
+                    config = config,
+                    regions = regions,
+                    locationHelper = locationHelper,
+                    onOpenOptions = { showOptions = true },
+                    onMainHub = { screen = AppScreen.Hub },
+                    onPolicyFallback = { reason -> rerouteFromMap(reason) },
+                )
+            }
+        }
+    }
+
+    if (showOptions) {
+        Box(Modifier.fillMaxSize().zIndex(50f)) {
+            OptionsScreen(
+                config = config,
+                onDismiss = { showOptions = false },
+                onConfirm = { updated ->
+                    scope.launch {
+                        config = updated
+                        store.saveConfig(updated)
+                        showOptions = false
+                    }
+                },
+                onResetBasic = { showResetBasicConfirm = true },
+                onExit = { (context as? Activity)?.finish() },
+                onMain = {
+                    showOptions = false
+                    screen = AppScreen.Hub
+                },
+            )
+        }
     }
 
     if (showResetBasicConfirm) {
@@ -355,130 +560,146 @@ fun WalkingApp() {
         )
     }
 
-    when (val s = screen) {
-        AppScreen.Loading -> LoadingScreen(loadingMessage, loadingDetail)
-        AppScreen.BasicSetup -> BasicSetupScreen(
-            initial = config,
-            store = store,
-            locationHelper = locationHelper,
-            geocoder = geocoder,
-            onDone = { updated ->
-                scope.launch {
-                    config = updated
-                    store.saveConfig(updated)
-                    screen = AppScreen.Hub
-                }
-            },
-        )
-        is AppScreen.TravelSetup -> TravelSetupScreen(
-            initial = config,
-            resumeJob = if (s.resumeDownload) pendingDownloadJob else null,
-            store = store,
-            geocoder = geocoder,
-            onDone = { updated, newRegions, firstRegion ->
-                config = updated
-                regions = newRegions
-                pendingDownloadJob = null
-                if (firstRegion != null) {
-                    screen = AppScreen.Map(firstRegion.id, simulated = false)
-                } else {
-                    screen = AppScreen.Hub
-                }
-            },
-            onCancel = { screen = AppScreen.Hub },
-            onJobUpdated = { pendingDownloadJob = it },
-        )
-        AppScreen.Hub -> HubScreen(
-            config = config,
-            regions = regions,
-            highlightId = highlightId,
-            blinkHighlight = blinkHighlight,
-            listState = listState,
-            dropdownExpanded = dropdownExpanded,
-            onDropdownExpanded = { dropdownExpanded = it },
-            onRegionMapTap = { r ->
-                highlightId = r.id
-                blinkHighlight = false
-                val idx = regions.indexOfFirst { it.id == r.id }
-                if (idx >= 0) {
-                    scope.launch { listState.animateScrollToItem(idx) }
-                }
-            },
-            onRegionSelect = { r ->
-                highlightId = r.id
-                blinkHighlight = true
-                showMoveConfirm = r
-            },
-            onSchedule = {
-                screen = if (config.basicSetupComplete) {
-                    AppScreen.TravelSetup(resumeDownload = false)
-                } else {
-                    AppScreen.BasicSetup
-                }
-            },
-            onOptions = { showOptions = true },
-            onExit = { showExitConfirm = true },
-        )
-        is AppScreen.Map -> {
-            val gps = lastGps
-            val region = regions.find { it.id == s.regionId }
-                ?: if (s.regionId == MapPolicy.HOME_LIVE_ONLINE_ID && gps != null) {
-                    MapPolicy.onlineHomeStub(config, gps.first, gps.second)
-                } else {
-                    null
-                }
-            if (region == null) {
-                screen = AppScreen.Hub
-            } else {
-                MapGuideScreen(
-                    region = region,
-                    config = config,
-                    regions = regions,
-                    simulateGps = s.simulated,
-                    locationHelper = locationHelper,
-                    onOpenOptions = { showOptions = true },
-                    onMainHub = { screen = AppScreen.Hub },
-                    onPolicyFallback = { reason -> rerouteFromMap(reason) },
+    StatusBarScrim(Modifier.align(Alignment.TopCenter).zIndex(999f))
+    }
+}
+
+private data class HubRow(
+    val key: String,
+    val countryLabel: String,
+    val cityName: String,
+    val subtitle: String,
+    val isDownloading: Boolean,
+    val activeDownload: Boolean,
+    val region: RegionRecord?,
+    val visited: Boolean,
+)
+
+@Composable
+private fun HubCityCard(
+    row: HubRow,
+    selected: Boolean,
+    onTap: () -> Unit,
+    onHold1s: () -> Unit,
+) {
+    val scope = rememberCoroutineScope()
+    val bg = when {
+        selected -> Color(0xFFEFF6FF)
+        row.isDownloading && row.activeDownload -> Color(0xFFFFF7ED)
+        row.isDownloading -> Color(0xFFF8FAFC)
+        else -> Color.White
+    }
+    val borderColor = when {
+        selected -> Color(0xFF93C5FD)
+        row.isDownloading && row.activeDownload -> Color(0xFFFDBA74)
+        row.isDownloading -> Color(0xFFCBD5E1)
+        else -> Color(0xFFE2E8F0)
+    }
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 4.dp)
+            .border(1.dp, borderColor, RoundedCornerShape(10.dp))
+            .background(bg, RoundedCornerShape(10.dp))
+            .pointerInput(row.key) {
+                detectTapGestures(
+                    onPress = {
+                        var held = false
+                        val job = scope.launch {
+                            delay(1000L)
+                            held = true
+                            onHold1s()
+                        }
+                        tryAwaitRelease()
+                        job.cancel()
+                        if (!held) onTap()
+                    },
                 )
             }
-        }
+            .padding(horizontal = 12.dp, vertical = 11.dp),
+    ) {
+        Text(
+            "${row.countryLabel.ifBlank { "—" }} · ${row.cityName}",
+            color = when {
+                row.isDownloading && row.activeDownload -> Color(0xFFEA580C)
+                row.visited -> Color(0xFF15803D)
+                else -> AppMenuStyle.text
+            },
+            style = MaterialTheme.typography.bodyMedium,
+            fontWeight = if (row.isDownloading) FontWeight.SemiBold else FontWeight.Normal,
+        )
+        Text(
+            row.subtitle,
+            style = MaterialTheme.typography.labelSmall,
+            color = if (row.isDownloading) Color(0xFF64748B) else AppMenuStyle.muted,
+            modifier = Modifier.padding(top = 3.dp),
+        )
     }
 }
 
 @Composable
-private fun LoadingScreen(title: String, detail: String) {
-    Row(
-        Modifier.fillMaxSize().padding(24.dp),
-        horizontalArrangement = Arrangement.Center,
-        verticalAlignment = Alignment.CenterVertically,
+private fun HubCityActionSheet(
+    row: HubRow,
+    modifier: Modifier = Modifier,
+    onDismiss: () -> Unit,
+    onOpenMap: () -> Unit,
+    onResumeDownload: () -> Unit,
+    onRedownload: () -> Unit,
+    onDelete: () -> Unit,
+) {
+    Column(
+        modifier
+            .fillMaxWidth()
+            .background(Color.White, RoundedCornerShape(12.dp))
+            .padding(vertical = 4.dp),
     ) {
-        Column(
-            horizontalAlignment = Alignment.CenterHorizontally,
-            modifier = Modifier.weight(1f),
-        ) {
-            Text(
-                "도보 여행 어플 (오프라인)",
-                style = MaterialTheme.typography.headlineSmall,
-                fontWeight = FontWeight.Bold,
-            )
-            Spacer(Modifier.height(24.dp))
-            CircularProgressIndicator()
+        Text(
+            row.cityName,
+            fontWeight = FontWeight.SemiBold,
+            color = AppMenuStyle.text,
+            modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp),
+        )
+        if (!row.isDownloading && row.region != null) {
+            HubActionRow("지도 열기", AppMenuStyle.accent, onOpenMap)
         }
-        Column(
-            horizontalAlignment = Alignment.Start,
-            modifier = Modifier.weight(1f).padding(start = 16.dp),
-        ) {
-            Text(title, color = Color(0xFFDC2626), style = MaterialTheme.typography.titleMedium)
-            if (detail.isNotBlank()) {
-                Spacer(Modifier.height(12.dp))
-                Text(
-                    detail,
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = Color(0xFF334155),
-                )
+        if (row.isDownloading) {
+            HubActionRow(
+                if (row.activeDownload) "다운로드 화면으로" else "다운로드 이어받기",
+                AppMenuStyle.accent,
+                onResumeDownload,
+            )
+            if (row.region != null) {
+                HubActionRow("처음부터 다시 받기", Color(0xFF0F766E), onRedownload)
             }
         }
+        if (row.region != null) {
+            HubActionRow("오프라인 데이터 삭제", AppMenuStyle.danger, onDelete)
+        }
+        HubActionRow("닫기", AppMenuStyle.muted, onDismiss)
     }
+}
+
+@Composable
+private fun HubActionRow(label: String, color: Color, onClick: () -> Unit) {
+    Text(
+        label,
+        color = color,
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick)
+            .padding(horizontal = 16.dp, vertical = 12.dp),
+        style = MaterialTheme.typography.bodyMedium,
+    )
+}
+
+private fun isHomeHubRegion(region: RegionRecord, config: TripConfig): Boolean {
+    if (region.id == HomeProgressiveDownloader.REGION_ID) return true
+    val home = config.homeCountry.trim()
+    if (home.isBlank()) return false
+    val label = region.countryLabel.trim()
+    return label.equals(home, ignoreCase = true) ||
+        label.contains(home, ignoreCase = true) ||
+        home.contains(label, ignoreCase = true)
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -486,152 +707,268 @@ private fun LoadingScreen(title: String, detail: String) {
 private fun HubScreen(
     config: TripConfig,
     regions: List<RegionRecord>,
+    pendingDownloadJob: DownloadJobState?,
+    downloadRunning: Boolean,
     highlightId: String?,
     blinkHighlight: Boolean,
+    recoveryBanner: String?,
     listState: androidx.compose.foundation.lazy.LazyListState,
-    dropdownExpanded: Boolean,
-    onDropdownExpanded: (Boolean) -> Unit,
     onRegionMapTap: (RegionRecord) -> Unit,
     onRegionSelect: (RegionRecord) -> Unit,
     onSchedule: () -> Unit,
+    onResumeDownload: () -> Unit,
+    onDeleteCity: (regionId: String) -> Unit,
+    onRedownloadCity: (regionId: String) -> Unit,
+    onCurrentRegion: () -> Unit,
+    showCurrentRegion: Boolean,
     onOptions: () -> Unit,
     onExit: () -> Unit,
+    store: TripStore,
+    onRegionImported: (RegionRecord) -> Unit,
 ) {
-    val completed = regions.filter { it.downloadComplete }
-    val homeFirst = completed.sortedWith(
-        compareByDescending<RegionRecord> {
-            it.countryLabel == config.homeCountry && it.countryLabel.isNotBlank()
-        }.thenBy { if (it.visited) 0 else 1 }.thenBy { it.cityName },
-    )
+    val context = LocalContext.current
+    var importError by remember { mutableStateOf("") }
+    var importOk by remember { mutableStateOf("") }
+    val completed = regions.filter { it.downloadComplete && !isHomeHubRegion(it, config) }
+    val partialRegions = regions.filter {
+        !it.downloadComplete && it.cityName.isNotBlank() && !isHomeHubRegion(it, config)
+    }
+    var downloadHints by remember { mutableStateOf<Map<String, String>>(emptyMap()) }
 
-    Scaffold(
-        containerColor = Color(0xFFF4F6F8),
-    ) { padding ->
-        Column(
-            Modifier.fillMaxSize().padding(padding),
-        ) {
-            Row(
-                Modifier
-                    .fillMaxWidth()
-                    .statusBarsPadding()
-                    .padding(horizontal = 4.dp, vertical = 1.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                IconButton(onClick = onOptions) {
-                    Icon(Icons.Default.Settings, contentDescription = "옵션")
+    LaunchedEffect(pendingDownloadJob, downloadRunning, regions) {
+        val job = pendingDownloadJob ?: return@LaunchedEffect
+        if (!job.active) return@LaunchedEffect
+        val hints = mutableMapOf<String, String>()
+        job.stops.filter { it.name !in job.finishedCityNames.toSet() }.forEach { stop ->
+            hints[stop.name] = withContext(Dispatchers.IO) {
+                DownloadProgressReader.tileProgressLine(context, job)
+            } ?: if (downloadRunning) "다운로드 진행 중…" else "다운로드 일시 중지"
+        }
+        downloadHints = hints
+    }
+
+    val downloadRows = remember(pendingDownloadJob, partialRegions, downloadHints, downloadRunning) {
+        val rows = mutableListOf<HubRow>()
+        val seen = mutableSetOf<String>()
+        val job = pendingDownloadJob
+        if (job?.active == true) {
+            job.stops.filter { it.name !in job.finishedCityNames.toSet() }.forEach { stop ->
+                seen += stop.name
+                val partial = partialRegions.find { pr ->
+                    pr.cityName.equals(stop.name, ignoreCase = true) ||
+                        pr.cityName.contains(stop.name, ignoreCase = true) ||
+                        stop.name.contains(pr.cityName, ignoreCase = true)
                 }
-                Text(
-                    "도보 여행 어플 (오프라인)",
-                    style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.Bold,
-                    modifier = Modifier.weight(1f),
-                    textAlign = TextAlign.Center,
+                val hint = downloadHints[stop.name]
+                val subtitle = when {
+                    downloadRunning && !hint.isNullOrBlank() -> "다운로드 중 · $hint"
+                    downloadRunning -> "다운로드 중 · WiFi 유지"
+                    !hint.isNullOrBlank() -> "일시 중지 · $hint · 탭하여 이어받기"
+                    else -> "일시 중지 · 탭하여 이어받기"
+                }
+                rows += HubRow(
+                    key = "dl:${stop.name}",
+                    countryLabel = job.countryLabel.ifBlank { job.destinationCountry },
+                    cityName = stop.name,
+                    subtitle = subtitle,
+                    isDownloading = true,
+                    activeDownload = downloadRunning,
+                    region = partial,
+                    visited = false,
                 )
-                Spacer(Modifier.width(48.dp))
             }
-            Box(
+        }
+        partialRegions.filter { pr -> pr.cityName !in seen }.forEach { pr ->
+            rows += HubRow(
+                key = "partial:${pr.id}",
+                countryLabel = pr.countryLabel,
+                cityName = pr.cityName,
+                subtitle = if (downloadRunning) "다운로드 중 · 미완료 지역" else "미완료 · 탭하여 이어받기",
+                isDownloading = true,
+                activeDownload = downloadRunning,
+                region = pr,
+                visited = false,
+            )
+        }
+        rows
+    }
+
+    val readyRows = completed.sortedWith(
+        compareBy<RegionRecord> { if (it.visited) 0 else 1 }.thenBy { it.cityName },
+    ).map { r ->
+        HubRow(
+            key = "ready:${r.id}",
+            countryLabel = r.countryLabel,
+            cityName = r.cityName,
+            subtitle = if (r.visited) "방문 완료 · 오프라인 지도" else "오프라인 지도 · 탭하여 열기",
+            isDownloading = false,
+            activeDownload = false,
+            region = r,
+            visited = r.visited,
+        )
+    }
+
+    val hubRows = downloadRows + readyRows
+    val mapRegions = (partialRegions + completed).distinctBy { it.id }
+    var menuRow by remember { mutableStateOf<HubRow?>(null) }
+    var confirmDeleteRow by remember { mutableStateOf<HubRow?>(null) }
+
+    if (confirmDeleteRow != null) {
+        val row = confirmDeleteRow!!
+        AlertDialog(
+            onDismissRequest = { confirmDeleteRow = null },
+            title = { Text("오프라인 데이터 삭제") },
+            text = {
+                Text(
+                    "${row.cityName}의 지도·명소 데이터를 삭제합니다.\n" +
+                        if (row.isDownloading) "다운로드는 중단됩니다." else "목록에서 제거됩니다.",
+                )
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        row.region?.id?.let { onDeleteCity(it) }
+                        confirmDeleteRow = null
+                        menuRow = null
+                    },
+                ) { Text("삭제", color = AppMenuStyle.danger) }
+            },
+            dismissButton = {
+                TextButton(onClick = { confirmDeleteRow = null }) { Text("취소") }
+            },
+        )
+    }
+
+    Column(Modifier.fillMaxSize().background(AppMenuStyle.bg)) {
+        HubTopBar(onOptions)
+        recoveryBanner?.let {
+            MenuWarnBanner(it, Modifier.padding(horizontal = 12.dp, vertical = 4.dp))
+        }
+        Column(
+            Modifier
+                .weight(1f)
+                .fillMaxWidth()
+                .padding(horizontal = 10.dp, vertical = 4.dp),
+        ) {
+            WorldMapCanvas(
+                regions = mapRegions.filter { it.downloadComplete }.ifEmpty { mapRegions },
+                highlightId = highlightId,
+                blinkHighlight = blinkHighlight,
+                onRegionTap = onRegionMapTap,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(180.dp),
+            )
+            Spacer(Modifier.height(8.dp))
+            Column(
                 Modifier
                     .weight(1f)
                     .fillMaxWidth()
-                    .padding(8.dp),
+                    .background(AppMenuStyle.card, RoundedCornerShape(12.dp))
+                    .padding(12.dp),
             ) {
-                WorldMapCanvas(
-                    regions = completed,
-                    highlightId = highlightId,
-                    blinkHighlight = blinkHighlight,
-                    onRegionTap = onRegionMapTap,
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .zIndex(0f),
+                Text(
+                    "도시 목록 (${hubRows.size})",
+                    fontWeight = FontWeight.SemiBold,
+                    color = AppMenuStyle.text,
                 )
                 Text(
-                    "● 밝은색=방문 · ● 어두운색=다운로드만",
+                    if (downloadRows.isNotEmpty()) {
+                        "탭 — 지도 열기 · 1초 길게 누르기 — 옵션"
+                    } else {
+                        "탭 — 지도 · 1초 길게 누르기 — 옵션"
+                    },
                     style = MaterialTheme.typography.labelSmall,
-                    color = Color(0xFF64748B),
-                    modifier = Modifier
-                        .align(Alignment.BottomStart)
-                        .padding(14.dp)
-                        .zIndex(1f),
+                    color = AppMenuStyle.muted,
+                    modifier = Modifier.padding(bottom = 6.dp),
                 )
-                Column(
-                    Modifier
-                        .align(Alignment.CenterEnd)
-                        .fillMaxHeight()
-                        .fillMaxWidth(0.42f)
-                        .zIndex(2f)
-                        .background(MapUiColors.sidePanelBg, RoundedCornerShape(12.dp))
-                        .padding(12.dp),
-                ) {
-                    Text(
-                        "다운로드한 도시를 지도에서 고르거나, 목록에서 탭하세요.",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = Color(0xFF64748B),
-                    )
-
-                    ExposedDropdownMenuBox(
-                        expanded = dropdownExpanded,
-                        onExpandedChange = onDropdownExpanded,
-                        modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
-                    ) {
-                        OutlinedTextField(
-                            value = homeFirst.find { it.id == highlightId }?.let { "${it.countryLabel} · ${it.cityName}" }
-                                ?: "다운로드 완료 지역 (${homeFirst.size})",
-                            onValueChange = {},
-                            readOnly = true,
-                            trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(dropdownExpanded) },
-                            modifier = Modifier.menuAnchor().fillMaxWidth(),
-                        )
-                        ExposedDropdownMenu(
-                            expanded = dropdownExpanded,
-                            onDismissRequest = { onDropdownExpanded(false) },
-                        ) {
-                            homeFirst.forEach { r ->
-                                val label = "${r.countryLabel.ifBlank { "—" }} · ${r.cityName}" +
-                                    if (r.visited) " (방문)" else ""
-                                DropdownMenuItem(
-                                    text = { Text(label) },
-                                    onClick = {
-                                        onDropdownExpanded(false)
-                                        onRegionSelect(r)
+                Box(Modifier.weight(1f).fillMaxWidth()) {
+                    LazyColumn(state = listState, modifier = Modifier.fillMaxSize()) {
+                        if (hubRows.isEmpty()) {
+                            item {
+                                Text(
+                                    "다운로드한 도시가 없습니다.\n여행 설정에서 지도·명소를 받을 수 있습니다.",
+                                    color = AppMenuStyle.muted,
+                                    modifier = Modifier.padding(8.dp),
+                                )
+                            }
+                        } else {
+                            itemsIndexed(hubRows, key = { _, row -> row.key }) { _, row ->
+                                HubCityCard(
+                                    row = row,
+                                    selected = row.region?.id == highlightId,
+                                    onTap = {
+                                        menuRow = null
+                                        when {
+                                            row.region != null -> onRegionSelect(row.region)
+                                            row.isDownloading -> onResumeDownload()
+                                        }
                                     },
+                                    onHold1s = { menuRow = row },
                                 )
                             }
                         }
                     }
-
-                    LazyColumn(
-                        state = listState,
-                        modifier = Modifier.weight(1f).padding(top = 4.dp),
-                    ) {
-                        itemsIndexed(homeFirst) { _, r ->
-                            Text(
-                                "${r.countryLabel.ifBlank { "—" }} · ${r.cityName}${if (r.visited) " ✓" else ""}",
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .clickable { onRegionSelect(r) }
-                                    .padding(8.dp),
-                                color = if (r.visited) Color(0xFF15803D) else Color(0xFF475569),
-                                style = MaterialTheme.typography.bodyMedium,
-                            )
-                        }
-                    }
-
-                    Button(onClick = onSchedule, modifier = Modifier.fillMaxWidth()) {
-                        Text("여행 스케줄 짜기")
-                    }
-                    Text(
-                        "새 여행국·일정을 입력하고 지도·명소 데이터를 받습니다.",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = Color.Gray,
-                        modifier = Modifier.padding(top = 4.dp),
-                    )
-                    OutlinedButton(
-                        onClick = onExit,
-                        modifier = Modifier.fillMaxWidth().padding(top = 6.dp),
-                    ) {
-                        Text("나가기")
+                    menuRow?.let { row ->
+                        Box(
+                            Modifier
+                                .matchParentSize()
+                                .zIndex(1f)
+                                .clickable(
+                                    indication = null,
+                                    interactionSource = remember { MutableInteractionSource() },
+                                ) { menuRow = null }
+                                .background(Color(0x40000000)),
+                        )
+                        HubCityActionSheet(
+                            row = row,
+                            modifier = Modifier
+                                .align(Alignment.Center)
+                                .zIndex(2f)
+                                .padding(horizontal = 28.dp),
+                            onDismiss = { menuRow = null },
+                            onOpenMap = {
+                                menuRow = null
+                                row.region?.let { onRegionSelect(it) }
+                            },
+                            onResumeDownload = {
+                                menuRow = null
+                                onResumeDownload()
+                            },
+                            onRedownload = {
+                                menuRow = null
+                                row.region?.id?.let { onRedownloadCity(it) }
+                            },
+                            onDelete = {
+                                menuRow = null
+                                confirmDeleteRow = row
+                            },
+                        )
                     }
                 }
+                MenuPrimaryButton("여행 설정", onSchedule, Modifier.padding(top = 6.dp))
+                RegionImportButton(
+                    store = store,
+                    enabled = !downloadRunning,
+                    modifier = Modifier.padding(top = 6.dp),
+                    onImported = { r ->
+                        importOk = ""
+                        importError = ""
+                        onRegionImported(r)
+                    },
+                    onError = { importError = it; importOk = "" },
+                    onSuccessMessage = { importOk = it; importError = "" },
+                )
+                if (importOk.isNotBlank()) {
+                    Text(importOk, color = Color(0xFF15803D), style = MaterialTheme.typography.labelSmall)
+                }
+                if (importError.isNotBlank()) {
+                    Text(importError, color = AppMenuStyle.danger, style = MaterialTheme.typography.labelSmall)
+                }
+                if (showCurrentRegion) {
+                    MenuSecondaryButton("현재 지역 보기", onCurrentRegion, Modifier.padding(top = 6.dp))
+                }
+                MenuSecondaryButton("나가기", onExit, Modifier.padding(top = 6.dp))
             }
         }
     }
@@ -643,6 +980,7 @@ private fun BasicSetupScreen(
     store: TripStore,
     locationHelper: LocationHelper,
     geocoder: NominatimGeocoder,
+    onOpenOptions: () -> Unit,
     onDone: (TripConfig) -> Unit,
 ) {
     val context = LocalContext.current
@@ -684,67 +1022,71 @@ private fun BasicSetupScreen(
         }
     }
 
-    Row(
-        Modifier
-            .fillMaxSize()
-            .statusBarsPadding()
-            .padding(horizontal = 12.dp, vertical = 8.dp),
-        horizontalArrangement = Arrangement.spacedBy(16.dp),
-    ) {
-        Column(Modifier.weight(0.45f).fillMaxHeight().verticalScroll(rememberScrollState())) {
-            Text("기본 설정", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
-            Text(
-                "처음 한 번만 설정합니다. 이후 변경은 옵션 → 「기본 설정 초기화」에서만 다시 입력할 수 있습니다.",
-                style = MaterialTheme.typography.bodySmall,
-                color = Color(0xFF64748B),
-                modifier = Modifier.padding(top = 6.dp, bottom = 12.dp),
-            )
-            CountryAutocompleteField(
-                homeCountry,
-                homeCountryCode,
-                { homeCountry = it },
-                { c -> homeCountryCode = c?.code },
-                catalog,
-                "모국 (GPS·자동완성)",
-            )
-            Text("원하는 정보", modifier = Modifier.padding(top = 8.dp))
-            Text("켜 둔 종류만 지도·목록에 표시됩니다.", style = MaterialTheme.typography.labelSmall, color = Color.Gray)
-            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                FilterChip(showHotel, { showHotel = !showHotel }, { Text("숙소") })
-                FilterChip(showRestaurant, { showRestaurant = !showRestaurant }, { Text("음식점") })
-                FilterChip(showSight, { showSight = !showSight }, { Text("명소") })
-            }
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Checkbox(autoDelete, { autoDelete = it })
-                Text("여행 기간 종료 후 자동 삭제")
-            }
-        }
-        Column(
-            Modifier.weight(0.55f).fillMaxHeight(),
-            verticalArrangement = Arrangement.Center,
-        ) {
-            Button(
-                onClick = {
-                    val code = homeCountryCode ?: catalog.resolveCountry(homeCountry)?.code ?: "KR"
-                    onDone(
-                        initial.copy(
-                            homeCountry = homeCountry,
-                            homeCountryCode = code,
-                            homeLat = homeLat,
-                            homeLon = homeLon,
-                            showHotel = showHotel,
-                            showRestaurant = showRestaurant,
-                            showSight = showSight,
-                            autoDeleteAfterTrip = autoDelete,
-                            basicSetupComplete = true,
-                        ),
+    AppMenuScaffold(
+        title = "기본 설정",
+        onOptions = onOpenOptions,
+        content = { padding ->
+            Column(
+                Modifier
+                    .padding(padding)
+                    .fillMaxSize()
+                    .verticalScroll(rememberScrollState())
+                    .padding(horizontal = 12.dp, vertical = 8.dp),
+            ) {
+                Text(
+                    "처음 한 번만 설정합니다.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = AppMenuStyle.muted,
+                    modifier = Modifier.padding(bottom = 12.dp),
+                )
+                MenuCard {
+                    CountryAutocompleteField(
+                        homeCountry,
+                        homeCountryCode,
+                        { homeCountry = it },
+                        { c -> homeCountryCode = c?.code },
+                        catalog,
+                        "모국",
                     )
-                },
-                enabled = homeCountry.isNotBlank(),
-                modifier = Modifier.fillMaxWidth(),
-            ) { Text("기본 설정 저장") }
-        }
-    }
+                }
+                Spacer(Modifier.height(10.dp))
+                MenuCard {
+                    Text("표시 정보", fontWeight = FontWeight.SemiBold, color = AppMenuStyle.text)
+                    Row(horizontalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.padding(top = 8.dp)) {
+                        FilterChip(showHotel, { showHotel = !showHotel }, { Text("숙소") })
+                        FilterChip(showRestaurant, { showRestaurant = !showRestaurant }, { Text("음식점") })
+                        FilterChip(showSight, { showSight = !showSight }, { Text("명소") })
+                    }
+                    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(top = 4.dp)) {
+                        Checkbox(autoDelete, { autoDelete = it })
+                        Text("여행 후 자동 삭제", style = MaterialTheme.typography.bodySmall)
+                    }
+                }
+                Spacer(Modifier.height(16.dp))
+                MenuPrimaryButton(
+                    text = "저장",
+                    enabled = homeCountry.isNotBlank(),
+                    onClick = {
+                        val code = homeCountryCode ?: catalog.resolveCountry(homeCountry)?.code ?: "KR"
+                        onDone(
+                            initial.copy(
+                                homeCountry = homeCountry,
+                                homeCountryCode = code,
+                                homeLat = homeLat,
+                                homeLon = homeLon,
+                                showHotel = showHotel,
+                                showRestaurant = showRestaurant,
+                                showSight = showSight,
+                                autoDeleteAfterTrip = autoDelete,
+                                basicSetupComplete = true,
+                            ),
+                        )
+                    },
+                    modifier = Modifier.fillMaxWidth(),
+                )
+            }
+        },
+    )
 }
 
 @Composable
@@ -753,9 +1095,12 @@ private fun TravelSetupScreen(
     resumeJob: DownloadJobState?,
     store: TripStore,
     geocoder: NominatimGeocoder,
+    onOpenOptions: () -> Unit,
     onDone: (TripConfig, List<RegionRecord>, RegionRecord?) -> Unit,
     onCancel: () -> Unit,
+    onGoMain: () -> Unit,
     onJobUpdated: (DownloadJobState?) -> Unit,
+    onRegionImported: (RegionRecord) -> Unit,
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -763,40 +1108,43 @@ private fun TravelSetupScreen(
     val catalog = remember { GeoCatalog(context) }
 
     var step by remember { mutableIntStateOf(if (resumeJob != null) 2 else 1) }
-    var destCountry by remember {
-        mutableStateOf(resumeJob?.destinationCountry?.ifBlank { resumeJob.countryLabel } ?: initial.destinationCountry)
-    }
-    var tripStart by remember {
+    val isFreshSetup = resumeJob == null
+    var destCountry by remember(resumeJob) {
         mutableStateOf(
-            when {
-                resumeJob != null && resumeJob.tripStartEpochDay > 0 ->
-                    PoiLogic.formatDate(resumeJob.tripStartEpochDay)
-                initial.tripStartEpochDay > 0 -> PoiLogic.formatDate(initial.tripStartEpochDay)
-                else -> PoiLogic.formatDate(LocalDate.now().toEpochDay())
-            },
-        )
-    }
-    var tripEnd by remember {
-        mutableStateOf(
-            when {
-                resumeJob != null && resumeJob.tripEndEpochDay > 0 ->
-                    PoiLogic.formatDate(resumeJob.tripEndEpochDay)
-                initial.tripEndEpochDay > 0 -> PoiLogic.formatDate(initial.tripEndEpochDay)
-                else -> PoiLogic.formatDate(LocalDate.now().plusDays(7).toEpochDay())
-            },
+            if (isFreshSetup) "" else resumeJob?.destinationCountry?.ifBlank { resumeJob.countryLabel }
+                ?: initial.destinationCountry,
         )
     }
     var skipHub by remember { mutableStateOf(resumeJob?.skipHubMenu ?: initial.skipHubMenu) }
     var scheduleLocked by remember { mutableStateOf(resumeJob != null) }
-    var destCountryCode by remember { mutableStateOf<String?>(null) }
+    var destCountryCode by remember(resumeJob) { mutableStateOf<String?>(null) }
     val homeCountryCode = initial.homeCountryCode.ifBlank { catalog.resolveCountry(initial.homeCountry)?.code ?: "KR" }
+    val homeEntry = remember(initial.homeCountry, homeCountryCode) {
+        catalog.resolveCountry(initial.homeCountry)
+            ?: catalog.allCountries().firstOrNull { it.code.equals(homeCountryCode, ignoreCase = true) }
+    }
+    val travelCountryPlaceholder = remember(homeEntry, initial.homeCountry) {
+        homeEntry?.nameKo?.takeIf { it.isNotBlank() }
+            ?: homeEntry?.nameEn?.takeIf { it.isNotBlank() }
+            ?: initial.homeCountry.takeIf { it.isNotBlank() }
+            ?: "모국"
+    }
+    val travelCityPlaceholder = remember(homeEntry) {
+        homeEntry?.capital?.takeIf { it.isNotBlank() } ?: "수도"
+    }
 
     val legs = remember(resumeJob) {
         mutableStateListOf<ScheduleLeg>().also { list ->
-            val seed = resumeJob?.legs?.takeIf { it.isNotEmpty() }?.map { it.copy(legConfirmed = true) }
-                ?: initial.legs.takeIf { it.isNotEmpty() }?.map { it.copy(legConfirmed = false) }
-                ?: listOf(ScheduleLeg(id = store.newLegId()))
-            list.addAll(seed)
+            val raw = if (isFreshSetup) {
+                listOf(defaultScheduleLeg(store.newLegId()))
+            } else {
+                resumeJob?.legs?.takeIf { it.isNotEmpty() }?.map { it.copy(legConfirmed = true) }
+                    ?: initial.legs.takeIf { it.isNotEmpty() }?.map { it.copy(legConfirmed = false) }
+                    ?: listOf(defaultScheduleLeg(store.newLegId()))
+            }
+            val tripStartSeed = resumeJob?.tripStartEpochDay ?: initial.tripStartEpochDay
+            val tripEndSeed = resumeJob?.tripEndEpochDay ?: initial.tripEndEpochDay
+            list.addAll(normalizeLegDates(raw, tripStartSeed, tripEndSeed))
         }
     }
     var downloading by remember { mutableStateOf(DownloadSession.running.value) }
@@ -806,6 +1154,9 @@ private fun TravelSetupScreen(
     var resumeStarted by remember { mutableStateOf(false) }
     var showBatteryOptDialog by remember { mutableStateOf(false) }
     var pendingDownloadSeed by remember { mutableStateOf<DownloadJobState?>(null) }
+    var autoResumeCount by remember { mutableIntStateOf(0) }
+    var diskTileHint by remember { mutableStateOf<String?>(null) }
+    var importOk by remember { mutableStateOf("") }
 
     val notifPermissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission(),
@@ -836,16 +1187,18 @@ private fun TravelSetupScreen(
     }
 
     fun buildJob(jobSeed: DownloadJobState? = null): DownloadJobState? {
-        val stops = buildStopsFromLegs(legs)
+        val normalized = normalizeLegDates(legs.toList())
+        val stops = buildStopsFromLegs(normalized)
         if (stops.isEmpty()) return null
+        val (tripStartDay, tripEndDay) = tripEpochRangeFromLegs(normalized)
         return DownloadJobState(
             active = true,
             countryLabel = destCountry,
             homeCountryCode = homeCountryCode,
             destinationCountry = destCountry,
-            tripStartEpochDay = PoiLogic.parseDate(tripStart).toEpochDay(),
-            tripEndEpochDay = PoiLogic.parseDate(tripEnd).toEpochDay(),
-            legs = legs.toList(),
+            tripStartEpochDay = tripStartDay,
+            tripEndEpochDay = tripEndDay,
+            legs = normalized,
             skipHubMenu = skipHub,
             stops = stops,
             finishedCityNames = jobSeed?.finishedCityNames ?: emptyList(),
@@ -871,9 +1224,9 @@ private fun TravelSetupScreen(
         RegionDownloadForegroundService.start(context, job)
     }
 
-    /** 다운로드 시작 — 미제외 시 배터리 최적화 해제 먼저 요청 */
+    /** 이어받기(jobSeed 있음)는 배터리 팝업 없이 즉시 시작 */
     fun requestDownload(jobSeed: DownloadJobState? = null) {
-        if (BatteryOptimizationHelper.isExempt(context)) {
+        if (BatteryOptimizationHelper.isExempt(context) || jobSeed != null) {
             launchDownloadService(jobSeed)
             return
         }
@@ -909,155 +1262,194 @@ private fun TravelSetupScreen(
         if (resumeJob != null && !resumeStarted && resumeJob.active) {
             resumeStarted = true
             if (!DownloadSession.running.value) {
-                requestDownload(resumeJob)
+                launchDownloadService(resumeJob)
             }
         }
     }
 
-    Column(
-        Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp),
-    ) {
-        Text("여행 설정 $step/2", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
-        Text(
-            when (step) {
-                1 -> "여행국·기간·도시 일정을 입력합니다. 도시마다 확인 버튼을 눌러 주세요."
-                else -> "WiFi에서 지도·명소·도보 경로를 받습니다. 다른 앱으로 나가도 알림으로 계속 받습니다."
-            },
-            style = MaterialTheme.typography.bodySmall,
-            color = Color(0xFF64748B),
-            modifier = Modifier.padding(top = 6.dp, bottom = 4.dp),
-        )
-        if (initial.homeCountry.isNotBlank()) {
-            Text("모국: ${initial.homeCountry}", style = MaterialTheme.typography.labelSmall, color = Color.Gray)
+    LaunchedEffect(step, downloading, resumeJob) {
+        if (step != 2) return@LaunchedEffect
+        while (true) {
+            delay(12_000)
+            if (downloading || DownloadSession.running.value) continue
+            val job = withContext(Dispatchers.IO) { store.loadDownloadJob() } ?: continue
+            if (!job.active) continue
+            if (autoResumeCount >= 6) continue
+            autoResumeCount++
+            diskTileHint = withContext(Dispatchers.IO) {
+                DownloadProgressReader.tileProgressLine(context, job)
+            }
+            launchDownloadService(job)
         }
+    }
 
-        when (step) {
-            1 -> {
-                Text("1단계 — 목적지·일정", fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(top = 12.dp))
-                CountryAutocompleteField(
-                    destCountry,
-                    destCountryCode,
-                    { destCountry = it; scheduleLocked = false },
-                    { c ->
-                        destCountryCode = c?.code
-                        scheduleLocked = false
-                    },
-                    catalog,
-                    "여행국 (자동완성)",
-                )
-                if (destCountry.isNotBlank()) {
-                    catalog.resolveCountry(destCountry)?.let { c ->
-                        Text("선택: ${c.nameKo} · 수도 ${c.capital}", style = MaterialTheme.typography.labelSmall, color = Color.Gray)
-                    }
+    LaunchedEffect(step, downloading, resumeJob) {
+        if (step != 2 || downloading) return@LaunchedEffect
+        val job = resumeJob ?: withContext(Dispatchers.IO) { store.loadDownloadJob() } ?: return@LaunchedEffect
+        if (job.active) {
+            diskTileHint = withContext(Dispatchers.IO) {
+                DownloadProgressReader.tileProgressLine(context, job)
+            }
+        }
+    }
+
+    AppMenuScaffold(
+        title = "여행 설정 $step/2",
+        onBack = when {
+            downloading -> null
+            step == 2 -> {
+                {
+                    step = 1
+                    scheduleLocked = false
+                    error = ""
                 }
-                DateMaskField(tripStart, { tripStart = it; scheduleLocked = false }, "시작일")
-                DateMaskField(tripEnd, { tripEnd = it; scheduleLocked = false }, "종료일")
-                Text(
-                    "일정을 나눠 추가하시면 다운로드가 더 정확해집니다.",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = Color.Gray,
-                    modifier = Modifier.padding(vertical = 8.dp),
-                )
-
-                legs.forEachIndexed { idx, leg ->
-                    LegRouteEditor(
-                        leg = leg,
-                        legIndex = idx,
-                        countryHint = destCountry,
+            }
+            else -> onCancel
+        },
+        onOptions = onOpenOptions,
+        content = { padding ->
+            if (step == 1) {
+                Column(
+                    Modifier
+                        .padding(padding)
+                        .fillMaxSize()
+                        .padding(horizontal = 14.dp, vertical = 8.dp),
+                ) {
+                    if (initial.homeCountry.isNotBlank()) {
+                        Text(
+                            "모국: ${initial.homeCountry}",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = AppMenuStyle.muted,
+                        )
+                    }
+                    CountryAutocompleteField(
+                        destCountry,
+                        destCountryCode,
+                        { destCountry = it; scheduleLocked = false },
+                        { c ->
+                            destCountryCode = c?.code
+                            scheduleLocked = false
+                        },
+                        catalog,
+                        "여행국",
+                        placeholder = travelCountryPlaceholder,
+                    )
+                    if (destCountry.isNotBlank()) {
+                        catalog.resolveCountry(destCountry)?.let { c ->
+                            Text(
+                                "${c.nameKo} · ${c.capital}",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = AppMenuStyle.muted,
+                            )
+                        }
+                    }
+                    Spacer(Modifier.height(8.dp))
+                    ScheduleLegsVerticalList(
+                        legs = legs,
+                        destCountry = destCountry,
                         catalog = catalog,
                         geocoder = geocoder,
-                        onLegChange = { updated ->
+                        onLegChange = { idx, updated ->
                             legs[idx] = updated
                             scheduleLocked = false
                         },
-                        onDeleteLeg = { legToDelete = idx },
-                        canDelete = legs.size > 1 || leg.startPoint.name.isNotBlank() ||
-                            leg.endPoint.name.isNotBlank() || leg.waypoints.any { it.name.isNotBlank() },
-                    )
-                    if (isLegReady(leg) && !leg.legConfirmed) {
-                        Button(
-                            onClick = { legs[idx] = leg.copy(legConfirmed = true) },
-                            modifier = Modifier.fillMaxWidth(),
-                        ) { Text("이 일정 확정") }
-                    }
-                }
-                TextButton(onClick = {
-                    legs.add(ScheduleLeg(id = store.newLegId()))
-                    scheduleLocked = false
-                }) { Text("+ 다른 일정 추가") }
-
-                val allLegsReady = legs.isNotEmpty() && legs.all { isLegReady(it) && it.legConfirmed }
-                Button(
-                    onClick = {
-                        if (!allLegsReady) {
-                            error = "모든 일정에서 출발·도착 확인 후 「이 일정 확정」을 눌러 주세요."
-                            return@Button
-                        }
-                        scheduleLocked = true
-                        error = ""
-                        step = 2
-                    },
-                    enabled = allLegsReady,
-                    modifier = Modifier.fillMaxWidth().padding(top = 12.dp),
-                ) { Text("일정 전체 확정 → 다음") }
-            }
-            2 -> {
-                Text("2단계 — 다운로드", fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(top = 12.dp))
-                if (resumeJob != null) {
-                    Text(
-                        "이전 다운로드 이어받기 중… (${resumeJob.finishedCityNames.size}/${resumeJob.stops.size.coerceAtLeast(1)} 도시 완료)",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = Color(0xFF2563EB),
-                        modifier = Modifier.padding(bottom = 4.dp),
-                    )
-                }
-                Text(
-                    "지도(글자 없음·고해상도), 명소, 도보 도로를 각 지점 주변 ${com.mcpauto.walkingofflineguide.data.STOP_DOWNLOAD_RADIUS_KM.toInt()}km만 받습니다.",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = Color(0xFF64748B),
-                )
-                Text(
-                    scheduleSummary(legs, destCountry),
-                    style = MaterialTheme.typography.bodyMedium,
-                    modifier = Modifier.padding(vertical = 8.dp),
-                )
-                val dl = remember(legs, scheduleLocked) { RegionDownloadManager(context, store) }
-                val stops = buildStopsFromLegs(legs)
-                val estBytes = dl.estimateBytes(stops)
-                val estMin = dl.estimateDurationMinutes(stops)
-                Text(
-                    "예상 용량: 약 ${RegionDownloadManager.formatSize(estBytes)} · 대략 ${estMin}분\n(지도+명소+번역+도보경로, WiFi·명소 수에 따라 달라짐)",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = Color.Gray,
-                )
-
-                downloadProgress?.let { p ->
-                    Spacer(Modifier.height(12.dp))
-                    if (downloading && p.percent <= 3) {
-                        Text(
-                            "잠시만 기다려 주세요… (${p.phase}${if (p.phaseDetail.isNotBlank()) " · ${p.phaseDetail}" else ""})",
-                            color = Color(0xFF64748B),
-                            style = MaterialTheme.typography.bodyMedium,
-                        )
-                    }
-                    LinearProgressIndicator(
-                        progress = { p.percent.coerceIn(0, 100) / 100f },
-                        modifier = Modifier.fillMaxWidth(),
-                    )
-                    Text(p.label, style = MaterialTheme.typography.bodySmall)
-                }
-
-                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    OutlinedButton(
-                        onClick = {
-                            step = 1
+                        onAddLeg = {
+                            legs.add(defaultScheduleLeg(store.newLegId()))
                             scheduleLocked = false
                         },
-                        enabled = !downloading,
+                        onDeleteLeg = { idx -> legToDelete = idx },
                         modifier = Modifier.weight(1f),
-                    ) {
-                        Text("이전으로 가기")
+                        cityPlaceholder = travelCityPlaceholder,
+                    )
+                    val allLegsReady = legs.isNotEmpty() && legs.all { isLegReady(it) && it.legConfirmed }
+                    MenuPrimaryButton(
+                        text = "일정 전체 확정 → 다음",
+                        enabled = allLegsReady,
+                        onClick = {
+                            if (!allLegsReady) {
+                                error = "모든 일정에서 출발·도착 확인 후 「이 일정 확정」을 눌러 주세요."
+                                return@MenuPrimaryButton
+                            }
+                            scheduleLocked = true
+                            error = ""
+                            step = 2
+                        },
+                        modifier = Modifier.padding(top = 8.dp),
+                    )
+                    if (error.isNotBlank()) {
+                        Text(error, color = AppMenuStyle.danger, modifier = Modifier.padding(top = 4.dp))
                     }
+                }
+            } else {
+                Column(
+                    Modifier
+                        .padding(padding)
+                        .fillMaxSize()
+                        .verticalScroll(rememberScrollState())
+                        .padding(horizontal = 14.dp, vertical = 8.dp),
+                ) {
+                    Text(
+                        "WiFi에서 지도·명소 받기",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = AppMenuStyle.muted,
+                        modifier = Modifier.padding(bottom = 8.dp),
+                    )
+                    Text("2단계 — 다운로드", fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(top = 4.dp))
+                    if (resumeJob != null) {
+                        Text(
+                            "이전 다운로드 이어받기 (${resumeJob.finishedCityNames.size}/${resumeJob.stops.size.coerceAtLeast(1)} 도시 완료)",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = Color(0xFF2563EB),
+                            modifier = Modifier.padding(bottom = 4.dp),
+                        )
+                    }
+                    if (!downloading && resumeJob?.active == true) {
+                        Text(
+                            buildString {
+                                append("다운로드가 잠시 멈춘 상태입니다. 자동으로 이어받기 시도 중…")
+                                diskTileHint?.let { append("\n($it)") }
+                            },
+                            style = MaterialTheme.typography.labelSmall,
+                            color = Color(0xFFEA580C),
+                            modifier = Modifier.padding(bottom = 6.dp),
+                        )
+                    }
+                    Text(
+                        "지도(글자 없음·고해상도), 명소, 도보 도로를 각 지점 주변 ${com.mcpauto.walkingofflineguide.data.STOP_DOWNLOAD_RADIUS_KM.toInt()}km만 받습니다.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = Color(0xFF64748B),
+                    )
+                    Text(
+                        scheduleSummary(legs, destCountry),
+                        style = MaterialTheme.typography.bodyMedium,
+                        modifier = Modifier.padding(vertical = 8.dp),
+                    )
+                    val dl = remember(legs, scheduleLocked) { RegionDownloadManager(context, store) }
+                    val stops = buildStopsFromLegs(legs)
+                    val estBytes = dl.estimateBytes(stops)
+                    val estMin = dl.estimateDurationMinutes(stops)
+                    Text(
+                        "예상 용량: 약 ${RegionDownloadManager.formatSize(estBytes)} · 대략 ${estMin}분\n(지도+명소+번역+도보경로, WiFi·명소 수에 따라 달라짐)",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = Color.Gray,
+                    )
+
+                    downloadProgress?.let { p ->
+                        Spacer(Modifier.height(12.dp))
+                        if (downloading && p.percent <= 3) {
+                            Text(
+                                "잠시만 기다려 주세요… (${p.phase}${if (p.phaseDetail.isNotBlank()) " · ${p.phaseDetail}" else ""})",
+                                color = Color(0xFF64748B),
+                                style = MaterialTheme.typography.bodyMedium,
+                            )
+                        }
+                        LinearProgressIndicator(
+                            progress = { p.percent.coerceIn(0, 100) / 100f },
+                            modifier = Modifier.fillMaxWidth(),
+                        )
+                        Text(p.label, style = MaterialTheme.typography.bodySmall)
+                    }
+
                     Button(
                         onClick = {
                             if (downloading) {
@@ -1067,34 +1459,69 @@ private fun TravelSetupScreen(
                             requestDownload(resumeJob)
                         },
                         enabled = scheduleLocked,
-                        modifier = Modifier.weight(1f),
-                    ) { Text(if (downloading) "다운로드 중단" else if (resumeJob != null) "이어받기" else "다운로드 시작") }
-                }
+                        modifier = Modifier.fillMaxWidth(),
+                    ) {
+                        Text(
+                            if (downloading) "다운로드 중단"
+                            else if (resumeJob != null) "이어받기"
+                            else "다운로드 시작",
+                        )
+                    }
 
-                if (!BatteryOptimizationHelper.isExempt(context) && !downloading) {
+                    if (!BatteryOptimizationHelper.isExempt(context) && !downloading) {
+                        Text(
+                            "다운로드 전 「배터리 최적화 제외」 허용을 권장합니다 (화면 꺼짐·Doze 대비).",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = Color(0xFF2563EB),
+                            modifier = Modifier.padding(top = 6.dp),
+                        )
+                    }
+
                     Text(
-                        "다운로드 전 「배터리 최적화 제외」 허용을 권장합니다 (화면 꺼짐·Doze 대비).",
+                        "또는 PC에서 미리 받은 zip",
                         style = MaterialTheme.typography.labelSmall,
-                        color = Color(0xFF2563EB),
-                        modifier = Modifier.padding(top = 6.dp),
+                        color = AppMenuStyle.muted,
+                        modifier = Modifier.padding(top = 12.dp),
                     )
-                }
+                    RegionImportButton(
+                        store = store,
+                        enabled = !downloading,
+                        modifier = Modifier.padding(top = 4.dp),
+                        onImported = { r ->
+                            importOk = ""
+                            error = ""
+                            onRegionImported(r)
+                        },
+                        onError = { importOk = ""; error = it },
+                        onSuccessMessage = { importOk = it; error = "" },
+                    )
+                    if (importOk.isNotBlank()) {
+                        Text(importOk, color = Color(0xFF15803D), modifier = Modifier.padding(top = 4.dp))
+                    }
 
-                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(top = 8.dp)) {
-                    Checkbox(skipHub, { skipHub = it })
-                    Text("여행기간 동안 메뉴 다시 보지 않기")
+                    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(top = 8.dp)) {
+                        Checkbox(skipHub, { skipHub = it })
+                        Text("여행기간 동안 설정 다시 보지 않기")
+                    }
+                    Text(
+                        "체크 시 여행 시작~종료일 사이 앱 실행 시 메뉴 없이 바로 지도로 들어갑니다.",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = Color.Gray,
+                    )
+
+                    OutlinedButton(onClick = onGoMain, modifier = Modifier.fillMaxWidth().padding(top = 12.dp)) {
+                        Text("메인으로 가기")
+                    }
+                    OutlinedButton(onClick = onCancel, modifier = Modifier.fillMaxWidth().padding(top = 8.dp)) {
+                        Text("취소")
+                    }
+                    if (error.isNotBlank()) {
+                        Text(error, color = AppMenuStyle.danger, modifier = Modifier.padding(top = 8.dp))
+                    }
                 }
-                Text(
-                    "체크 시 여행 시작~종료일 사이 앱 실행 시 메뉴 없이 바로 지도로 들어갑니다.",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = Color.Gray,
-                )
             }
-        }
-
-        OutlinedButton(onClick = onCancel, modifier = Modifier.fillMaxWidth().padding(top = 12.dp)) { Text("취소") }
-        if (error.isNotBlank()) Text(error, color = Color.Red, modifier = Modifier.padding(top = 8.dp))
-    }
+        },
+    )
 
     if (showBatteryOptDialog) {
         AlertDialog(
@@ -1149,7 +1576,7 @@ private fun TravelSetupScreen(
                     if (idx in legs.indices) {
                         legs.removeAt(idx)
                         if (legs.isEmpty()) {
-                            legs.add(ScheduleLeg(id = store.newLegId()))
+                            legs.add(defaultScheduleLeg(store.newLegId()))
                         }
                     }
                     scheduleLocked = false
@@ -1169,7 +1596,6 @@ private fun OptionsScreen(
     config: TripConfig,
     onDismiss: () -> Unit,
     onConfirm: (TripConfig) -> Unit,
-    onDeleteAllMaps: () -> Unit,
     onResetBasic: () -> Unit,
     onExit: () -> Unit,
     onMain: () -> Unit,
@@ -1180,39 +1606,20 @@ private fun OptionsScreen(
     var autoDelete by remember { mutableStateOf(config.autoDeleteAfterTrip) }
     var manualDelete by remember { mutableStateOf(config.manualDeletePrompt) }
 
-    Scaffold(
-        containerColor = Color(0xFFF4F6F8),
-        topBar = {
-            Row(
-                Modifier
-                    .fillMaxWidth()
-                    .statusBarsPadding()
-                    .padding(horizontal = 2.dp, vertical = 1.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                IconButton(onClick = onDismiss) {
-                    Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "닫기")
-                }
-                Text(
-                    "옵션",
-                    style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.Bold,
-                    modifier = Modifier.weight(1f),
-                )
-                TextButton(
-                    onClick = {
-                        onConfirm(
-                            config.copy(
-                                showHotel = showHotel,
-                                showRestaurant = showRestaurant,
-                                showSight = showSight,
-                                autoDeleteAfterTrip = autoDelete,
-                                manualDeletePrompt = manualDelete,
-                            ),
-                        )
-                    },
-                ) { Text("저장") }
-            }
+    AppMenuScaffold(
+        title = "옵션",
+        onBack = onDismiss,
+        actionLabel = "저장",
+        onAction = {
+            onConfirm(
+                config.copy(
+                    showHotel = showHotel,
+                    showRestaurant = showRestaurant,
+                    showSight = showSight,
+                    autoDeleteAfterTrip = autoDelete,
+                    manualDeletePrompt = manualDelete,
+                ),
+            )
         },
     ) { padding ->
         Column(
@@ -1220,78 +1627,37 @@ private fun OptionsScreen(
                 .padding(padding)
                 .fillMaxSize()
                 .verticalScroll(rememberScrollState())
-                .padding(horizontal = 16.dp, vertical = 8.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp),
+                .padding(horizontal = 14.dp, vertical = 8.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp),
         ) {
-            Column(
-                Modifier
-                    .fillMaxWidth()
-                    .background(Color.White, RoundedCornerShape(12.dp))
-                    .padding(14.dp),
-            ) {
-                Text("표시 정보", fontWeight = FontWeight.Bold)
-                Text(
-                    "끄면 지도·목록에서 해당 종류가 숨겨집니다.",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = Color(0xFF64748B),
-                    modifier = Modifier.padding(bottom = 8.dp),
-                )
-                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            MenuCard {
+                Text("표시", fontWeight = FontWeight.SemiBold, color = AppMenuStyle.text)
+                Row(horizontalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.padding(top = 8.dp)) {
                     FilterChip(showHotel, { showHotel = !showHotel }, { Text("숙소") })
                     FilterChip(showRestaurant, { showRestaurant = !showRestaurant }, { Text("음식점") })
                     FilterChip(showSight, { showSight = !showSight }, { Text("명소") })
                 }
             }
-            Column(
-                Modifier
-                    .fillMaxWidth()
-                    .background(Color.White, RoundedCornerShape(12.dp))
-                    .padding(14.dp),
-            ) {
-                Text("다운로드 지도", fontWeight = FontWeight.Bold)
+            MenuCard {
+                Text("지도 저장", fontWeight = FontWeight.SemiBold, color = AppMenuStyle.text)
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Checkbox(autoDelete, { autoDelete = it })
-                    Text("여행 후 자동 삭제")
+                    Text("여행 후 자동 삭제", style = MaterialTheme.typography.bodySmall)
                 }
-                Text(
-                    "종료일이 지나면 다운로드 지도를 자동으로 지웁니다.",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = Color(0xFF64748B),
-                )
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Checkbox(manualDelete, { manualDelete = it })
-                    Text("수동 삭제 안내")
+                    Text("삭제 안내", style = MaterialTheme.typography.bodySmall)
                 }
             }
-            Column(
-                Modifier
-                    .fillMaxWidth()
-                    .background(Color.White, RoundedCornerShape(12.dp))
-                    .padding(horizontal = 8.dp, vertical = 4.dp),
-            ) {
+            MenuCard {
                 TextButton(onClick = onResetBasic, modifier = Modifier.fillMaxWidth()) {
-                    Text("기본 설정 초기화", color = Color(0xFFDC2626))
+                    Text("기본 설정 초기화", color = AppMenuStyle.danger)
                 }
-                Text(
-                    "모국·표시 정보를 처음부터 다시 설정합니다.",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = Color(0xFF64748B),
-                    modifier = Modifier.padding(horizontal = 12.dp).padding(bottom = 4.dp),
-                )
-                TextButton(onClick = onDeleteAllMaps, modifier = Modifier.fillMaxWidth()) {
-                    Text("지도 데이터 전부 삭제", color = Color(0xFFDC2626))
-                }
-                Text(
-                    "저장된 타일·명소·도보경로를 모두 지웁니다.",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = Color(0xFF64748B),
-                    modifier = Modifier.padding(horizontal = 12.dp).padding(bottom = 4.dp),
-                )
                 TextButton(onClick = onMain, modifier = Modifier.fillMaxWidth()) {
-                    Text("메인으로")
+                    Text("메인으로", color = AppMenuStyle.accent)
                 }
                 TextButton(onClick = onExit, modifier = Modifier.fillMaxWidth()) {
-                    Text("나가기")
+                    Text("앱 종료", color = AppMenuStyle.muted)
                 }
             }
         }

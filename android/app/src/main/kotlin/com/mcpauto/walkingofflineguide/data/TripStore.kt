@@ -27,11 +27,14 @@ class TripStore(private val context: Context) {
         if (!configFile.exists()) return@withContext TripConfig()
         runCatching {
             json.decodeFromString<TripConfig>(configFile.readText())
-        }.getOrElse { TripConfig() }
+        }.getOrElse {
+            SafeStorage.quarantineCorrupt(configFile)
+            TripConfig()
+        }
     }
 
     suspend fun saveConfig(config: TripConfig) = withContext(Dispatchers.IO) {
-        configFile.writeText(json.encodeToString(config))
+        SafeStorage.atomicWriteText(configFile, json.encodeToString(config))
     }
 
     suspend fun loadRegions(): List<RegionRecord> = withContext(Dispatchers.IO) {
@@ -39,13 +42,16 @@ class TripStore(private val context: Context) {
             if (!dir.isDirectory) return@mapNotNull null
             val meta = File(dir, "region.json")
             if (!meta.exists()) return@mapNotNull null
-            runCatching { json.decodeFromString<RegionRecord>(meta.readText()) }.getOrNull()
+            runCatching { json.decodeFromString<RegionRecord>(meta.readText()) }.getOrElse {
+                SafeStorage.quarantineCorrupt(meta)
+                null
+            }
         }?.sortedBy { it.cityName }.orEmpty()
     }
 
     suspend fun saveRegion(record: RegionRecord) = withContext(Dispatchers.IO) {
         val dir = regionDir(record.id)
-        File(dir, "region.json").writeText(json.encodeToString(record))
+        SafeStorage.atomicWriteText(File(dir, "region.json"), json.encodeToString(record))
     }
 
     suspend fun deleteRegion(id: String) = withContext(Dispatchers.IO) {
@@ -53,8 +59,11 @@ class TripStore(private val context: Context) {
     }
 
     fun todayLegIndex(config: TripConfig): Int? {
-        if (config.tripStartEpochDay <= 0L) return null
         val today = LocalDate.now().toEpochDay()
+        config.legs.indexOfFirst { leg ->
+            leg.startEpochDay > 0 && leg.endEpochDay > 0 && today in leg.startEpochDay..leg.endEpochDay
+        }.takeIf { it >= 0 }?.let { return it }
+        if (config.tripStartEpochDay <= 0L) return null
         val dayOffset = ChronoUnit.DAYS.between(
             LocalDate.ofEpochDay(config.tripStartEpochDay),
             LocalDate.ofEpochDay(today),
@@ -97,11 +106,14 @@ class TripStore(private val context: Context) {
         if (!downloadJobFile.exists()) return@withContext null
         runCatching {
             json.decodeFromString<DownloadJobState>(downloadJobFile.readText())
-        }.getOrNull()?.takeIf { it.active }
+        }.getOrElse {
+            SafeStorage.quarantineCorrupt(downloadJobFile)
+            null
+        }?.takeIf { it.active }
     }
 
     suspend fun saveDownloadJob(job: DownloadJobState) = withContext(Dispatchers.IO) {
-        downloadJobFile.writeText(json.encodeToString(job))
+        SafeStorage.atomicWriteText(downloadJobFile, json.encodeToString(job))
     }
 
     suspend fun clearDownloadJob() = withContext(Dispatchers.IO) {

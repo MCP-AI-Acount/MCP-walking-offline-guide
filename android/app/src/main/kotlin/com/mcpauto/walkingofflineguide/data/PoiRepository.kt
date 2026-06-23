@@ -8,15 +8,22 @@ class PoiRepository(private val context: Context) {
     private val json = Json { ignoreUnknownKeys = true }
 
     fun loadRegionBundle(regionId: String): PoiBundle {
-        val file = File(context.filesDir, "walking_data/regions/$regionId/poi.json")
+        val file = poiFile(regionId)
         if (!file.exists()) return PoiBundle(region = regionId)
-        return json.decodeFromString(PoiBundle.serializer(), file.readText())
+        return runCatching {
+            json.decodeFromString(PoiBundle.serializer(), file.readText())
+        }.getOrElse {
+            SafeStorage.quarantineCorrupt(file)
+            PoiBundle(region = regionId)
+        }
     }
 
     fun saveRegionBundle(bundle: PoiBundle) {
         if (bundle.region.isBlank()) return
-        val file = File(context.filesDir, "walking_data/regions/${bundle.region}/poi.json")
-        file.parentFile?.mkdirs()
-        file.writeText(json.encodeToString(PoiBundle.serializer(), bundle))
+        val file = poiFile(bundle.region)
+        SafeStorage.atomicWriteText(file, json.encodeToString(PoiBundle.serializer(), bundle))
     }
+
+    private fun poiFile(regionId: String): File =
+        File(context.filesDir, "walking_data/regions/$regionId/poi.json")
 }

@@ -16,6 +16,8 @@ data class GeoResult(
     val displayName: String,
     val description: String,
     val placeType: String = "",
+    /** reverse 시 파싱된 행정 계층 — [adminPlaceLabel] 정본 */
+    val adminParts: List<String> = emptyList(),
 )
 
 class NominatimGeocoder {
@@ -68,7 +70,7 @@ class NominatimGeocoder {
         searchSuggestions(cityQuery, countryHint, limit = 1).firstOrNull()
 
     suspend fun reverse(lat: Double, lon: Double): GeoResult? = withContext(Dispatchers.IO) {
-        val url = "https://nominatim.openstreetmap.org/reverse?lat=$lat&lon=$lon&format=json&addressdetails=1&accept-language=ko,en"
+        val url = "https://nominatim.openstreetmap.org/reverse?lat=$lat&lon=$lon&format=json&addressdetails=1&zoom=16&accept-language=ko,en"
         val req = Request.Builder()
             .url(url)
             .header("User-Agent", "WalkingOfflineGuide/1.0 (Android)")
@@ -78,13 +80,17 @@ class NominatimGeocoder {
             val o = JSONObject(resp.body?.string().orEmpty())
             val display = o.optString("display_name")
             val addr = o.optJSONObject("address")
-            val adminCity = adminCityFromAddress(addr, display)
+            val adminParts = parseAdminHierarchy(display, addr)
+            val adminCity = adminParts.firstOrNull()?.ifBlank { adminCityFromAddress(addr, display) }
+                ?: adminCityFromAddress(addr, display)
+            val adminLabel = formatAdminPlaceLabel(adminParts).ifBlank { adminCity }
             GeoResult(
                 name = adminCity,
                 lat = lat,
                 lon = lon,
                 displayName = display,
-                description = adminCity,
+                description = adminLabel,
+                adminParts = adminParts,
             )
         }
     }
@@ -140,9 +146,164 @@ class NominatimGeocoder {
 
 }
 
-/** GPS 지도 상단 — 시·광역시급 행정단위 1개 (서울·평택 등) */
+/** GPS 지도 상단 — 시·구·동 등 행정 계층 (도로·번지 제외, 동급까지) */
+fun GeoResult.adminPlaceLabel(): String {
+    if (adminParts.isNotEmpty()) {
+        return formatAdminPlaceLabel(adminParts)
+    }
+    if (description.isNotBlank() && description.contains("-") && !description.contains(" · ")) {
+        return description
+    }
+    return formatAdminPlaceLabel(parseAdminHierarchy(displayName))
+}
+
+/** Nominatim reverse 결과에서 행정 계층 [대·중·소] — POI·상호명 제외 */
+fun parseAdminHierarchy(displayName: String, addr: org.json.JSONObject? = null): List<String> {
+    if (addr != null) {
+        parseKoreanHierarchy(addr)?.let { return it }
+    }
+    var large = ""
+    var medium = ""
+    var small = ""
+    if (addr != null) {
+        large = pickLargeAdmin(addr)
+        medium = pickMediumAdmin(addr)
+        small = pickSmallAdmin(addr)
+    }
+    if (large.isBlank() || medium.isBlank() || small.isBlank()) {
+        val parts = displayName.split(",")
+            .map { it.trim() }
+            .filter { it.isNotBlank() && !isCountryPart(it) && !looksLikePoiName(it) }
+        for (part in parts.asReversed()) {
+            when {
+                large.isBlank() && isLargeAdmin(part) -> large = normalizeLargeAdmin(part)
+                medium.isBlank() && isMediumAdmin(part) -> medium = part
+                small.isBlank() && isSmallAdmin(part) -> small = part
+            }
+        }
+    }
+    return listOf(large, medium, small).filter { it.isNotBlank() }.distinct().take(3)
+}
+
+fun formatAdminPlaceLabel(parts: List<String>): String =
+    parts.filter { it.isNotBlank() }
+        .take(3)
+        .map { stripAdminSuffix(it) }
+        .filter { it.isNotBlank() }
+        .distinct()
+        .joinToString("-")
+
+/** 시·구·동 접미사 제거 — 서울-송파-방이 */
+fun stripAdminSuffix(raw: String): String {
+    var s = raw.trim()
+    s = s.removeSuffix("특별자치시")
+    s = s.removeSuffix("특별자치도")
+    s = s.removeSuffix("특별시")
+    s = s.removeSuffix("광역시")
+    if (s.endsWith("시") && s.length > 2) s = s.dropLast(1)
+    if (s.endsWith("구") && s.length > 2) s = s.dropLast(1)
+    if (s.endsWith("군") && s.length > 2) s = s.dropLast(1)
+    if (s.endsWith("동") && s.length > 2) s = s.dropLast(1)
+    if (s.endsWith("읍") && s.length > 2) s = s.dropLast(1)
+    if (s.endsWith("면") && s.length > 2) s = s.dropLast(1)
+    if (s.endsWith("리") && s.length > 2) s = s.dropLast(1)
+    s = s.replace(Regex("\\d+$"), "")
+    return s.trim()
+}
+
+private val KOREAN_METRO_SHORT = setOf("서울", "부산", "대구", "인천", "광주", "대전", "울산", "세종")
+
+/** 대한민국 Nominatim addr — 서울-송파-방이 */
+private fun parseKoreanHierarchy(addr: org.json.JSONObject): List<String>? {
+    val cc = addr.optString("country_code").lowercase()
+    val country = addr.optString("country")
+    val isKr = cc == "kr" || country.contains("한국") || country.contains("Korea", ignoreCase = true)
+    if (!isKr) return null
+
+    val state = addr.optString("state").trim()
+    val city = addr.optString("city").trim()
+    val borough = addr.optString("borough").trim()
+        .ifBlank { addr.optString("city_district").trim() }
+    val dong = listOf("quarter", "suburb", "neighbourhood", "village", "hamlet", "town")
+        .firstNotNullOfOrNull { key -> addr.optString(key).trim().takeIf { it.isNotBlank() } }
+        .orEmpty()
+
+    val large = when {
+        state.isNotBlank() -> normalizeLargeAdmin(state).ifBlank { stripAdminSuffix(state) }
+        city.isNotBlank() -> normalizeLargeAdmin(city).ifBlank { stripAdminSuffix(city) }
+        else -> ""
+    }
+    val medium = stripAdminSuffix(borough)
+    val small = stripAdminSuffix(dong)
+    val parts = listOf(large, medium, small).filter { it.isNotBlank() }.distinct()
+    return parts.takeIf { it.isNotEmpty() }
+}
+
+private fun pickLargeAdmin(addr: org.json.JSONObject): String {
+    listOf("state", "city", "town", "municipality", "province", "region").forEach { key ->
+        addr.optString(key).takeIf { it.isNotBlank() && isLargeAdmin(it) }?.let {
+            return normalizeLargeAdmin(it)
+        }
+    }
+    return ""
+}
+
+private fun pickMediumAdmin(addr: org.json.JSONObject): String {
+    listOf("city_district", "borough", "county", "district", "suburb").forEach { key ->
+        addr.optString(key).takeIf { it.isNotBlank() && isMediumAdmin(it) }?.let { return it }
+    }
+    return ""
+}
+
+private fun pickSmallAdmin(addr: org.json.JSONObject): String {
+    listOf("suburb", "neighbourhood", "quarter", "village", "hamlet").forEach { key ->
+        addr.optString(key).takeIf { it.isNotBlank() && isSmallAdmin(it) }?.let { return it }
+    }
+    return ""
+}
+
+private fun isLargeAdmin(raw: String): Boolean {
+    if (isRoadLike(raw) || isMediumAdmin(raw) || isSmallAdmin(raw) || looksLikePoiName(raw)) return false
+    if (raw in KOREAN_METRO_SHORT) return true
+    if (raw.endsWith("특별시") || raw.endsWith("광역시") || raw.endsWith("특별자치시") || raw.endsWith("특별자치도")) return true
+    if (raw.endsWith("시") && !raw.endsWith("특별시") && !raw.endsWith("광역시")) return true
+    if (raw.endsWith("도") && !raw.endsWith("특별자치도")) return false
+    return false
+}
+
+/** 상호·시설명 — 행정구역 접미사 없음 */
+private fun looksLikePoiName(raw: String): Boolean {
+    if (isLargeAdmin(raw) || isMediumAdmin(raw) || isSmallAdmin(raw) || isRoadLike(raw)) return false
+    return raw.length in 2..40
+}
+
+private fun isMediumAdmin(raw: String): Boolean =
+    raw.endsWith("구") || raw.endsWith("군") ||
+        raw.endsWith("County") || raw.endsWith("county")
+
+private fun isSmallAdmin(raw: String): Boolean =
+    raw.endsWith("동") || raw.endsWith("읍") || raw.endsWith("면") || raw.endsWith("리")
+
+private fun isCountryPart(raw: String): Boolean =
+    raw.equals("대한민국", true) || raw.equals("South Korea", true) ||
+        raw.equals("Republic of Korea", true) || raw.length <= 3 && raw.all { it.isUpperCase() }
+
+private fun normalizeLargeAdmin(raw: String): String {
+    var s = raw.trim()
+    s = s.removeSuffix("특별자치시")
+    s = s.removeSuffix("특별자치도")
+    s = s.removeSuffix("특별시")
+    s = s.removeSuffix("광역시")
+    if (s.endsWith("시") && s.length > 2) s = s.dropLast(1)
+    return s.trim()
+}
+
+private fun isRoadLike(raw: String): Boolean =
+    raw.endsWith("로") || raw.endsWith("길") || raw.contains("번길") || raw.contains("번지")
+
+/** @deprecated 단일 시급 — [adminPlaceLabel] 사용 */
 fun GeoResult.adminCityLabel(): String =
-    name.ifBlank {
+    adminPlaceLabel().split("-").firstOrNull().orEmpty().ifBlank {
         adminCityFromDisplay(displayName)
     }
 

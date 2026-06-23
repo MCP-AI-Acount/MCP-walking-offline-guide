@@ -64,7 +64,7 @@ class NavigationBearingProvider(context: Context) : SensorEventListener {
             else -> return
         }
         SensorManager.getRotationMatrixFromVector(rotationMatrix, event.values)
-        val bearing = MapHeading.landscapeForwardBearingDeg(
+        val bearing = MapHeading.portraitForwardBearingDeg(
             rotationMatrix,
             smoothedDeg ?: compassDeg,
         )

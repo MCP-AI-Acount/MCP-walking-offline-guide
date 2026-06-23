@@ -20,6 +20,7 @@ data class MapUiStrings(
     val options: String,
     val followGps: String,
     val followTrip: String,
+    val previewStartHold: String,
     val tilesMissing: String,
     val previewMode: String,
     val previewRouteHint: String,
@@ -96,8 +97,9 @@ object HomeLanguage {
         speak = "읽기", main = "메인", reset = "위치",
         options = "옵션",
         followGps = "현재 위치 고정", followTrip = "다음 여행지",
+        previewStartHold = "시작 위치 고정",
         tilesMissing = "지도 타일 없음 — 여행 설정에서 다시 다운로드해 주세요.",
-        previewMode = "다운로드 지역 미리보기 (현장 도착 전)",
+        previewMode = "시작 위치 기준 · 오프라인 지도",
         previewRouteHint = "현장 도착 후 도보 경로가 표시됩니다.",
         homeLiveMode = "모국 실시간 지도 (WiFi · GPS)",
     )
@@ -113,6 +115,7 @@ object HomeLanguage {
         speak = "Listen", main = "Home", reset = "Locate",
         options = "Options",
         followGps = "Lock to GPS", followTrip = "Next trip stop",
+        previewStartHold = "Lock to trip start",
         tilesMissing = "Map tiles missing — re-download from trip setup.",
         previewMode = "Downloaded area preview (not on-site)",
         previewRouteHint = "Walking routes appear when you arrive on-site.",
@@ -124,6 +127,7 @@ object HomeLanguage {
         emptyNearby = "周辺に場所がありません", routePrefix = "ルート",
         speak = "読み上げ", main = "ホーム", reset = "位置", options = "設定",
         followGps = "現在地固定", followTrip = "次の旅行先",
+        previewStartHold = "出発地点固定",
     )
     private val uiZh = uiEn.copy(
         restaurant = "餐厅", hotel = "住宿", sight = "景点",
@@ -131,6 +135,7 @@ object HomeLanguage {
         emptyNearby = "附近没有地点", routePrefix = "路线",
         speak = "朗读", main = "主页", reset = "定位", options = "选项",
         followGps = "锁定GPS", followTrip = "下一行程",
+        previewStartHold = "锁定出发位置",
     )
     private val uiFr = uiEn.copy(
         restaurant = "Restaurants", hotel = "Hôtels", sight = "Sites",
@@ -138,6 +143,7 @@ object HomeLanguage {
         emptyNearby = "Aucun lieu à proximité", routePrefix = "Itinéraire",
         speak = "Écouter", main = "Accueil", reset = "Position", options = "Options",
         followGps = "GPS actuel", followTrip = "Prochaine étape",
+        previewStartHold = "Fixer le départ",
     )
     private val uiDe = uiEn.copy(
         restaurant = "Restaurants", hotel = "Unterkünfte", sight = "Sehenswürdigkeiten",
@@ -145,6 +151,7 @@ object HomeLanguage {
         emptyNearby = "Keine Orte in der Nähe", routePrefix = "Route",
         speak = "Vorlesen", main = "Start", reset = "Position", options = "Optionen",
         followGps = "GPS fixieren", followTrip = "Nächster Stopp",
+        previewStartHold = "Startpunkt fixieren",
     )
     private val uiEs = uiEn.copy(
         restaurant = "Restaurantes", hotel = "Alojamientos", sight = "Lugares",
@@ -152,6 +159,7 @@ object HomeLanguage {
         emptyNearby = "No hay lugares cercanos", routePrefix = "Ruta",
         speak = "Escuchar", main = "Inicio", reset = "Ubicación", options = "Opciones",
         followGps = "Fijar GPS", followTrip = "Próxima parada",
+        previewStartHold = "Fijar inicio del viaje",
     )
     private val uiIt = uiEn.copy(
         restaurant = "Ristoranti", hotel = "Alloggi", sight = "Attrazioni",
@@ -159,6 +167,7 @@ object HomeLanguage {
         emptyNearby = "Nessun luogo nelle vicinanze", routePrefix = "Percorso",
         speak = "Ascolta", main = "Home", reset = "Posizione", options = "Opzioni",
         followGps = "Blocca GPS", followTrip = "Prossima tappa",
+        previewStartHold = "Fissa punto di partenza",
     )
 
     private val uiByLang = mapOf(

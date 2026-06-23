@@ -107,7 +107,10 @@ class RoutingGraph private constructor(
                 if (!file.exists()) return@withContext Empty
                 runCatching {
                     fromFile(json.decodeFromString<GraphFile>(file.readText()))
-                }.getOrElse { Empty }
+                }.getOrElse {
+                    SafeStorage.quarantineCorrupt(file)
+                    Empty
+                }
             }
             if (graph.hasData) cache[regionId] = graph
             graph

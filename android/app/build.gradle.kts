@@ -13,8 +13,8 @@ android {
         applicationId = "com.mcpauto.walkingofflineguide"
         minSdk = 26
         targetSdk = 35
-        versionCode = 111
-        versionName = "1.1.1"
+        versionCode = 148
+        versionName = "1.2.28"
     }
 
     buildTypes {

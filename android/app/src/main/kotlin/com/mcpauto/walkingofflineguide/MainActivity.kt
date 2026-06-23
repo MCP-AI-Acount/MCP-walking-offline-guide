@@ -10,14 +10,16 @@ import androidx.compose.material3.lightColorScheme
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
-import com.mcpauto.walkingofflineguide.logic.LandscapeOrientation
+import com.mcpauto.walkingofflineguide.data.CrashRecovery
+import com.mcpauto.walkingofflineguide.logic.PortraitOrientation
 import com.mcpauto.walkingofflineguide.ui.WalkingApp
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
-        requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE
+        requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
         super.onCreate(savedInstanceState)
-        LandscapeOrientation.init(this)
+        CrashRecovery.installHandler(this)
+        PortraitOrientation.init(this)
         enableEdgeToEdge()
         hideNavigationBar()
         setContent {
@@ -29,13 +31,13 @@ class MainActivity : ComponentActivity() {
 
     override fun onResume() {
         super.onResume()
-        LandscapeOrientation.init(this)
+        PortraitOrientation.init(this)
         hideNavigationBar()
     }
 
     override fun onConfigurationChanged(newConfig: android.content.res.Configuration) {
         super.onConfigurationChanged(newConfig)
-        LandscapeOrientation.init(this)
+        PortraitOrientation.init(this)
     }
 
     override fun onWindowFocusChanged(hasFocus: Boolean) {

@@ -14,7 +14,14 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.offset
+import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.layout.windowInsetsTopHeight
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
@@ -26,6 +33,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowDropDown
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.MyLocation
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Settings
@@ -40,6 +48,7 @@ import androidx.compose.material3.IconToggleButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -56,7 +65,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.height
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.zIndex
 import java.util.Locale
@@ -69,6 +77,7 @@ import androidx.compose.ui.graphics.Shadow
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.DpOffset
 import androidx.compose.ui.unit.dp
@@ -98,24 +107,30 @@ import com.mcpauto.walkingofflineguide.logic.TripNavigation
 import com.mcpauto.walkingofflineguide.map.MapUiColors
 import com.mcpauto.walkingofflineguide.map.PoiColors
 import com.mcpauto.walkingofflineguide.download.HomeProgressiveDownloader
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.withContext
 import com.mcpauto.walkingofflineguide.download.RegionDownloadManager
+import com.mcpauto.walkingofflineguide.network.LocalAdminGeocoder
 import com.mcpauto.walkingofflineguide.network.NominatimGeocoder
 import com.mcpauto.walkingofflineguide.network.OverpassClient
-import com.mcpauto.walkingofflineguide.network.adminCityLabel
+import com.mcpauto.walkingofflineguide.network.adminPlaceLabel
 import com.mcpauto.walkingofflineguide.network.WifiGate
 import com.mcpauto.walkingofflineguide.network.OnlineTileProvider
 import com.mcpauto.walkingofflineguide.util.HomeLanguage
 import com.mcpauto.walkingofflineguide.util.MapUiStrings
 import com.mcpauto.walkingofflineguide.util.countryFlagEmoji
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 private fun effectiveRegionBbox(bundle: PoiBundle, region: RegionRecord): Bbox =
     bundle.bbox.takeIf { it.north > it.south } ?: region.bbox
 
-/** 지도·우측 패널 상단 — 상태바 직하, 여백 최소 */
-private fun Modifier.mapChromeTop(): Modifier =
-    statusBarsPadding().padding(top = 1.dp)
+/** 상태바(시간·배터리) 바로 아래 — 지도는 edge-to-edge, 크롬만 inset */
+private fun Modifier.mapChromeBelowStatusBar(): Modifier = statusBarsPadding()
+
+/** 지도 상단 크롬 — 메뉴 톱니·뒤로와 같은 세로 위치 */
+fun Modifier.mapTopChromeInset(): Modifier =
+    statusBarsPadding().padding(horizontal = 4.dp, vertical = 6.dp)
 
 private fun matchesKindFilter(
     p: Poi,
@@ -128,12 +143,34 @@ private fun matchesKindFilter(
     else -> showSightseeing
 }
 
+private fun loadHomeCachePois(repo: PoiRepository): List<Poi> = runCatching {
+    repo.loadRegionBundle(HomeProgressiveDownloader.REGION_ID).pois
+}.getOrDefault(emptyList())
+
+private fun persistHomeCachePois(
+    repo: PoiRepository,
+    pois: List<Poi>,
+    lat: Double,
+    lon: Double,
+) {
+    if (pois.isEmpty()) return
+    val bb = PoiLogic.bboxAround(lat, lon, MapMath.POI_VIEW_RADIUS_KM)
+    repo.saveRegionBundle(
+        PoiBundle(
+            region = HomeProgressiveDownloader.REGION_ID,
+            labelKo = "모국 주변",
+            bbox = bb,
+            count = pois.size,
+            pois = pois,
+        ),
+    )
+}
+
 @Composable
 fun MapGuideScreen(
     region: RegionRecord,
     config: TripConfig,
     regions: List<RegionRecord>,
-    simulateGps: Boolean,
     locationHelper: LocationHelper,
     onOpenOptions: () -> Unit,
     onMainHub: () -> Unit,
@@ -181,7 +218,7 @@ fun MapGuideScreen(
     var regionLoaded by remember { mutableStateOf(false) }
     var tilesReady by remember { mutableStateOf(false) }
     var availableZooms by remember { mutableStateOf(RegionDownloadManager.ONLINE_ZOOMS) }
-    var hasRealGpsFix by remember(region.id) { mutableStateOf(simulateGps) }
+    var hasRealGpsFix by remember(region.id) { mutableStateOf(false) }
     var pos by remember(region.id) {
         mutableStateOf(UserPosition(region.lat, region.lon, simulated = true))
     }
@@ -191,9 +228,11 @@ fun MapGuideScreen(
     var showRestaurant by remember { mutableStateOf(config.showRestaurant) }
     var showHotel by remember { mutableStateOf(config.showHotel) }
     var minStarFilter by remember { mutableStateOf(0f) }
-    var followGps by remember { mutableStateOf(false) }
+    var followGps by remember(region.id) { mutableStateOf(false) }
     /** 오른쪽 위 크로스헤어 — GPS 현재 위치 화면 중앙 고정 */
     var gpsLocked by remember(region.id) { mutableStateOf(true) }
+    /** 유저가 GPS 고정을 직접 해제한 경우 — 재진입 시 자동 ON 금지 */
+    var userGpsLockOff by remember(region.id) { mutableStateOf(false) }
     var selectedPoiId by remember { mutableStateOf<String?>(null) }
     var routingGraph by remember { mutableStateOf<RoutingGraph?>(null) }
     var routePoints by remember { mutableStateOf<List<Pair<Double, Double>>>(emptyList()) }
@@ -204,10 +243,11 @@ fun MapGuideScreen(
     var policyFallbackSent by remember(region.id) { mutableStateOf(false) }
     var livePois by remember { mutableStateOf<List<Poi>>(emptyList()) }
     var homeCachePois by remember { mutableStateOf<List<Poi>>(emptyList()) }
+    var poiFetchError by remember { mutableStateOf<String?>(null) }
     var headingDeg by remember { mutableStateOf<Float?>(null) }
     var targetHeadingDeg by remember { mutableStateOf<Float?>(null) }
     var tileCacheGeneration by remember { mutableIntStateOf(0) }
-    var radarRadiusM by remember { mutableIntStateOf(100) }
+    var radarRadiusM by remember { mutableIntStateOf(200) }
     var gpsPlaceLabel by remember { mutableStateOf<String?>(null) }
     var lastReverseLat by remember { mutableStateOf<Double?>(null) }
     var lastReverseLon by remember { mutableStateOf<Double?>(null) }
@@ -215,9 +255,10 @@ fun MapGuideScreen(
     var navMapLat by remember { mutableStateOf(0.0) }
     var navMapLon by remember { mutableStateOf(0.0) }
 
-    val upcomingAnchor = remember(config, regions) {
-        TripNavigation.upcomingTravelAnchor(config, regions)
+    val previewAnchor = remember(config, region) {
+        TripNavigation.scheduleAnchorForCity(config, region)
     }
+    var previewAnchorLocked by remember(region.id) { mutableStateOf(true) }
 
     DisposableEffect(Unit) {
         onDispose { speech.shutdown() }
@@ -246,12 +287,7 @@ fun MapGuideScreen(
         }
     }
 
-    LaunchedEffect(hasLocationPermission, simulateGps) {
-        if (simulateGps) {
-            hasRealGpsFix = true
-            pos = UserPosition(region.lat, region.lon, simulated = false)
-            return@LaunchedEffect
-        }
+    LaunchedEffect(hasLocationPermission, region.id) {
         if (!hasLocationPermission) return@LaunchedEffect
         runCatching { locationHelper.acquirePosition() }.onSuccess { applyGpsFix(it) }
     }
@@ -264,41 +300,59 @@ fun MapGuideScreen(
 
     LaunchedEffect(region.id) {
         regionLoaded = false
-        bundle = repo.loadRegionBundle(region.id)
-        selectedPoiId = null
-        val count = tileStore.loadRegion(region.id)
-        val atHomeGps = hasRealGpsFix && TripNavigation.isAtHomeCountry(config, pos.lat, pos.lon)
-        val homeCount = if (TripNavigation.isHomeRegion(config, region) || atHomeGps) {
-            homeCacheTiles.loadRegion(HomeProgressiveDownloader.REGION_ID)
-        } else {
-            0
+        try {
+            bundle = repo.loadRegionBundle(region.id)
+            selectedPoiId = null
+            val count = tileStore.loadRegion(region.id)
+            val atHomeGps = hasRealGpsFix && TripNavigation.isAtHomeCountry(config, pos.lat, pos.lon)
+            val homeCount = if (TripNavigation.isHomeRegion(config, region) || atHomeGps) {
+                homeCacheTiles.loadRegion(HomeProgressiveDownloader.REGION_ID)
+            } else {
+                0
+            }
+            availableZooms = (
+                tileStore.availableZooms() + homeCacheTiles.availableZooms() + RegionDownloadManager.ONLINE_ZOOMS
+                ).ifEmpty { RegionDownloadManager.ONLINE_ZOOMS }
+            homeCachePois = runCatching {
+                repo.loadRegionBundle(HomeProgressiveDownloader.REGION_ID).pois
+            }.getOrDefault(emptyList())
+            tilesReady = count > 0 || homeCount > 0 ||
+                (hasInternet && (TripNavigation.isHomeRegion(config, region) || atHomeGps))
+            if (homeCount > 0 || count > 0) tileCacheGeneration++
+            routingGraph = RoutingGraph.load(context, region.id)
+            if (TripNavigation.isHomeRegion(config, region) || region.id == MapPolicy.HOME_LIVE_ONLINE_ID) {
+                val homeGraph = RoutingGraph.load(context, HomeProgressiveDownloader.REGION_ID)
+                if (homeGraph.hasData) routingGraph = homeGraph
+            }
+            val bb = effectiveRegionBbox(bundle, region)
+            val homeLiveInit = TripNavigation.isHomeLiveMode(config, pos, region, hasRealGpsFix, hasInternet)
+            val onSiteNow = TripNavigation.isOnSite(pos, region, bb, hasRealGpsFix)
+            val atHomeForPoiNow = TripNavigation.isAtHomeForPoi(config, pos, region, hasRealGpsFix)
+            val gpsAnchorNow = hasRealGpsFix && !pos.simulated && (onSiteNow || homeLiveInit || atHomeForPoiNow)
+            if (gpsAnchorNow) {
+                followGps = true
+                if (!userGpsLockOff) gpsLocked = true
+            } else {
+                followGps = false
+                gpsLocked = false
+                previewAnchorLocked = true
+            }
+            val w = if (mapSize.width > 0) mapSize.width.toFloat() else 720f
+            camera = if (gpsAnchorNow) {
+                MapCameraMath.defaultCamera(
+                    pos,
+                    bb,
+                    availableZooms,
+                    centerOnPos = true,
+                    heading = true,
+                    screenW = w,
+                )
+            } else {
+                MapCameraMath.cameraAt(previewAnchor.lat, previewAnchor.lon, availableZooms, screenW = w)
+            }
+        } finally {
+            regionLoaded = true
         }
-        availableZooms = (
-            tileStore.availableZooms() + homeCacheTiles.availableZooms() + RegionDownloadManager.ONLINE_ZOOMS
-            ).ifEmpty { RegionDownloadManager.ONLINE_ZOOMS }
-        homeCachePois = repo.loadRegionBundle(HomeProgressiveDownloader.REGION_ID).pois
-        tilesReady = count > 0 || homeCount > 0 ||
-            (hasInternet && (TripNavigation.isHomeRegion(config, region) || atHomeGps))
-        if (homeCount > 0 || count > 0) tileCacheGeneration++
-        routingGraph = RoutingGraph.load(context, region.id)
-        if (TripNavigation.isHomeRegion(config, region) || region.id == MapPolicy.HOME_LIVE_ONLINE_ID) {
-            val homeGraph = RoutingGraph.load(context, HomeProgressiveDownloader.REGION_ID)
-            if (homeGraph.hasData) routingGraph = homeGraph
-        }
-        regionLoaded = true
-        val bb = effectiveRegionBbox(bundle, region)
-        val homeLiveInit = TripNavigation.isHomeLiveMode(config, pos, region, hasRealGpsFix, hasInternet)
-        val onSiteNow = TripNavigation.isOnSite(pos, region, bb, hasRealGpsFix)
-        followGps = onSiteNow || homeLiveInit
-        gpsLocked = onSiteNow || homeLiveInit
-        val centerGps = onSiteNow || homeLiveInit
-        camera = MapCameraMath.defaultCamera(
-            if (centerGps) pos else null,
-            bb,
-            availableZooms,
-            centerOnPos = centerGps,
-            heading = centerGps,
-        )
     }
 
     val regionBbox = effectiveRegionBbox(bundle, region)
@@ -314,8 +368,15 @@ fun MapGuideScreen(
         )
     }
     val homeLive = TripNavigation.isHomeLiveMode(config, pos, region, hasRealGpsFix, hasInternet)
+    val atHomeForPoi = TripNavigation.isAtHomeForPoi(config, pos, region, hasRealGpsFix)
     val onSite = TripNavigation.isOnSite(pos, region, regionBbox, hasRealGpsFix)
     val useOnlineMap = homeLive
+    /** true = 실제 GPS · false = 일정 시작 위치 (데이터 소스만 다름, 지도 기능 동일) */
+    val useGpsAnchor = hasRealGpsFix && !pos.simulated && (onSite || homeLive || atHomeForPoi)
+    val showGpsPin = useGpsAnchor
+    val headingModeActive = useGpsAnchor && gpsLocked && hasLocationPermission
+    val locationLocked = if (useGpsAnchor) gpsLocked else previewAnchorLocked
+    val lockContentDescription = if (useGpsAnchor) ui.followGps else ui.previewStartHold
 
     LaunchedEffect(hasRealGpsFix, homeLive, onSite, hasInternet, pos.lat, pos.lon) {
         if (!hasRealGpsFix || (!homeLive && !onSite)) {
@@ -329,19 +390,21 @@ fun MapGuideScreen(
         if (prevLat != null && prevLon != null && gpsPlaceLabel != null) {
             if (PoiLogic.haversineM(prevLat, prevLon, pos.lat, pos.lon) < 150.0) return@LaunchedEffect
         }
-        if (!hasInternet) {
-            gpsPlaceLabel = String.format(Locale.getDefault(), "%.4f°, %.4f°", pos.lat, pos.lon)
+        suspend fun resolvePlaceLabel(): String? {
+            if (hasInternet) {
+                delay(350)
+                runCatching { geocoder.reverse(pos.lat, pos.lon)?.adminPlaceLabel() }
+                    .getOrNull()
+                    ?.takeIf { it.isNotBlank() }
+                    ?.let { return it }
+            }
+            return LocalAdminGeocoder.reverseLabel(context, pos.lat, pos.lon)
+        }
+        resolvePlaceLabel()?.let { label ->
+            gpsPlaceLabel = label
             lastReverseLat = pos.lat
             lastReverseLon = pos.lon
-            return@LaunchedEffect
         }
-        delay(350)
-        val label = runCatching { geocoder.reverse(pos.lat, pos.lon)?.adminCityLabel() }.getOrNull()
-            ?.takeIf { it.isNotBlank() }
-            ?: String.format(Locale.getDefault(), "%.4f°, %.4f°", pos.lat, pos.lon)
-        gpsPlaceLabel = label
-        lastReverseLat = pos.lat
-        lastReverseLon = pos.lon
     }
 
     val headerCountryCode = remember(config, region, homeLive, homeCode) {
@@ -354,9 +417,8 @@ fun MapGuideScreen(
     val headerFlag = remember(headerCountryCode) { countryFlagEmoji(headerCountryCode) }
 
     val mapHeaderTitle = when {
-        hasRealGpsFix && (homeLive || onSite) -> {
-            val place = gpsPlaceLabel
-                ?: String.format(Locale.getDefault(), "%.4f°, %.4f°", pos.lat, pos.lon)
+        useGpsAnchor && (homeLive || onSite) -> {
+            val place = gpsPlaceLabel?.takeIf { it.isNotBlank() } ?: "위치 확인 중…"
             "$headerFlag $place"
         }
         else -> "$headerFlag ${region.cityName}"
@@ -380,9 +442,6 @@ fun MapGuideScreen(
             onPolicyFallback(reason)
         }
     }
-    val showGpsPin = hasRealGpsFix && !pos.simulated && (onSite || homeLive)
-    val gpsControlEnabled = showGpsPin
-    val headingModeActive = showGpsPin && gpsLocked && hasLocationPermission && !simulateGps
 
     LaunchedEffect(showGpsPin, pos.lat, pos.lon) {
         if (!showGpsPin || !hasRealGpsFix) return@LaunchedEffect
@@ -393,8 +452,31 @@ fun MapGuideScreen(
         }
     }
 
+    fun centerOnScheduleAnchor() {
+        previewAnchorLocked = true
+        followGps = false
+        val w = if (mapSize.width > 0) mapSize.width.toFloat() else 720f
+        camera = MapCameraMath.cameraAt(previewAnchor.lat, previewAnchor.lon, availableZooms, screenW = w)
+        pos = pos.copy(lat = previewAnchor.lat, lon = previewAnchor.lon, simulated = true)
+    }
+
+    fun toggleScheduleAnchorHold() {
+        if (previewAnchorLocked) {
+            previewAnchorLocked = false
+        } else {
+            centerOnScheduleAnchor()
+        }
+    }
+
+    LaunchedEffect(useGpsAnchor, previewAnchorLocked, previewAnchor.lat, previewAnchor.lon) {
+        if (useGpsAnchor || !previewAnchorLocked) return@LaunchedEffect
+        camera = camera?.recenter(previewAnchor.lat, previewAnchor.lon)
+            ?: MapCameraMath.cameraAt(previewAnchor.lat, previewAnchor.lon, availableZooms)
+    }
+
     fun disableGpsLock() {
         if (!gpsLocked) return
+        userGpsLockOff = true
         gpsLocked = false
         // 해제 = 헤딩·중앙핀만 OFF — follow·배율·줌 변경 금지
         camera?.let { c ->
@@ -410,6 +492,7 @@ fun MapGuideScreen(
 
     fun enableGpsLock() {
         if (!showGpsPin || !hasRealGpsFix) return
+        userGpsLockOff = false
         navAnchor.reset(pos.lat, pos.lon)
         navMapLat = navAnchor.lat
         navMapLon = navAnchor.lon
@@ -432,6 +515,27 @@ fun MapGuideScreen(
 
     fun toggleGpsLock() {
         if (gpsLocked) disableGpsLock() else enableGpsLock()
+    }
+
+    fun disableLocationLock() {
+        if (useGpsAnchor) disableGpsLock() else previewAnchorLocked = false
+    }
+
+    fun toggleLocationLock() {
+        if (useGpsAnchor) toggleGpsLock() else toggleScheduleAnchorHold()
+    }
+
+    LaunchedEffect(useGpsAnchor, hasRealGpsFix, userGpsLockOff) {
+        if (useGpsAnchor && hasRealGpsFix && !userGpsLockOff) {
+            followGps = true
+            enableGpsLock()
+        } else if (!useGpsAnchor) {
+            followGps = false
+            gpsLocked = false
+            if (pos.lat != previewAnchor.lat || pos.lon != previewAnchor.lon) {
+                pos = pos.copy(lat = previewAnchor.lat, lon = previewAnchor.lon, simulated = true)
+            }
+        }
     }
 
     LaunchedEffect(headingModeActive, mapSize.width, camera?.visibleSpanM) {
@@ -478,8 +582,8 @@ fun MapGuideScreen(
         }
     }
 
-    DisposableEffect(hasLocationPermission, simulateGps, headingModeActive) {
-        if (hasLocationPermission && !simulateGps) {
+    DisposableEffect(hasLocationPermission, headingModeActive) {
+        if (hasLocationPermission) {
             locationHelper.startUpdates(
                 onUpdate = { applyGpsFix(it) },
                 bearingProvider = if (headingModeActive) bearingProvider else null,
@@ -489,8 +593,8 @@ fun MapGuideScreen(
         onDispose { locationHelper.stopUpdates() }
     }
 
-    LaunchedEffect(onSite, homeLive) {
-        if (!onSite && !homeLive) {
+    LaunchedEffect(onSite, homeLive, useGpsAnchor) {
+        if (!useGpsAnchor) {
             followGps = false
             gpsLocked = false
         }
@@ -512,18 +616,107 @@ fun MapGuideScreen(
         camera = camera?.recenter(pos.lat, pos.lon) ?: return@LaunchedEffect
     }
 
-    LaunchedEffect(homeLive, hasInternet, pos.lat, pos.lon) {
-        if (!homeLive || !hasInternet) {
-            livePois = emptyList()
-            return@LaunchedEffect
+    LaunchedEffect(atHomeForPoi, onSite, homeLive, useGpsAnchor, hasInternet, pos.lat, pos.lon, radarRadiusM) {
+        val homeCtx = atHomeForPoi || homeLive
+        val anchorLat = if (useGpsAnchor) pos.lat else previewAnchor.lat
+        val anchorLon = if (useGpsAnchor) pos.lon else previewAnchor.lon
+        if (useGpsAnchor && (!hasRealGpsFix || pos.simulated)) return@LaunchedEffect
+
+        homeCachePois = loadHomeCachePois(repo)
+        if (homeCachePois.isNotEmpty() || bundle.pois.isNotEmpty()) {
+            poiFetchError = null
         }
-        delay(400)
-        val bb = PoiLogic.bboxAround(pos.lat, pos.lon, MapMath.POI_USER_RADIUS_KM)
-        livePois = runCatching { overpass.fetchPois(bb, homeLang) }.getOrDefault(emptyList())
+
+        if (!hasInternet) return@LaunchedEffect
+
+        val fetchLang = if (homeCtx) homeLang else destLang
+        val radiiKm = listOf(4.0, 2.0, 8.0)
+        for (rKm in radiiKm) {
+            val bb = PoiLogic.bboxAround(anchorLat, anchorLon, rKm)
+            val result = runCatching { overpass.fetchPois(bb, fetchLang) }
+            result.onSuccess { fetched ->
+                if (fetched.isNotEmpty()) {
+                    livePois = fetched
+                    poiFetchError = null
+                    if (homeCtx) {
+                        withContext(Dispatchers.IO) {
+                            persistHomeCachePois(repo, fetched, anchorLat, anchorLon)
+                        }
+                        homeCachePois = fetched
+                    }
+                    return@LaunchedEffect
+                }
+            }.onFailure { err ->
+                poiFetchError = err.message?.take(120)
+            }
+            delay(300)
+        }
     }
 
-    LaunchedEffect(homeLive, hasRealGpsFix, pos.lat, pos.lon) {
-        if (!homeLive && !TripNavigation.isAtHomeCountry(config, pos.lat, pos.lon)) return@LaunchedEffect
+    // POI 없으면 8초마다 재시도 (GPS·시작 위치 공통)
+    LaunchedEffect(atHomeForPoi, homeLive, onSite, useGpsAnchor, hasInternet, hasRealGpsFix, pos.lat, pos.lon, previewAnchor.lat, previewAnchor.lon) {
+        val homeCtx = atHomeForPoi || homeLive
+        if (!homeCtx && !onSite && useGpsAnchor) return@LaunchedEffect
+        val anchorLat = if (useGpsAnchor) pos.lat else previewAnchor.lat
+        val anchorLon = if (useGpsAnchor) pos.lon else previewAnchor.lon
+        while (true) {
+            delay(8000)
+            if (useGpsAnchor && (!hasRealGpsFix || pos.simulated)) continue
+            homeCachePois = loadHomeCachePois(repo)
+            val total = (bundle.pois + livePois + homeCachePois).distinctBy { it.id }
+            if (total.isNotEmpty()) {
+                poiFetchError = null
+                continue
+            }
+            if (!hasInternet) continue
+            val fetchLang = if (homeCtx) homeLang else destLang
+            val bb = PoiLogic.bboxAround(anchorLat, anchorLon, MapMath.POI_VIEW_RADIUS_KM)
+            runCatching { overpass.fetchPois(bb, fetchLang) }.onSuccess { fetched ->
+                if (fetched.isNotEmpty()) {
+                    livePois = fetched
+                    poiFetchError = null
+                    if (homeCtx) {
+                        withContext(Dispatchers.IO) {
+                            persistHomeCachePois(repo, fetched, anchorLat, anchorLon)
+                        }
+                        homeCachePois = fetched
+                    }
+                }
+            }.onFailure { err ->
+                poiFetchError = err.message?.take(120)
+            }
+        }
+    }
+
+    // WiFi 보충 — 오프라인 번들 + 시작 위치 주변 온라인 POI
+    LaunchedEffect(region.id, useGpsAnchor, atHomeForPoi, homeLive, hasInternet, destLang, previewAnchor.lat, previewAnchor.lon) {
+        if (useGpsAnchor || atHomeForPoi || homeLive || !hasInternet) return@LaunchedEffect
+        delay(350)
+        val bb = PoiLogic.bboxAround(previewAnchor.lat, previewAnchor.lon, MapMath.POI_VIEW_RADIUS_KM)
+        val fetched = runCatching { overpass.fetchPois(bb, destLang) }.getOrDefault(emptyList())
+        if (fetched.isNotEmpty()) {
+            livePois = fetched
+            poiFetchError = null
+        }
+    }
+
+    LaunchedEffect(atHomeForPoi, hasRealGpsFix, pos.lat, pos.lon) {
+        if (!atHomeForPoi) return@LaunchedEffect
+        homeCachePois = loadHomeCachePois(repo)
+    }
+
+    LaunchedEffect(region.id, region.downloadComplete) {
+        while (true) {
+            delay(6000)
+            val fresh = withContext(Dispatchers.IO) { repo.loadRegionBundle(region.id) }
+            if (fresh.pois.size != bundle.pois.size) bundle = fresh
+            if (region.downloadComplete) break
+        }
+    }
+
+    LaunchedEffect(atHomeForPoi, homeLive, hasRealGpsFix, pos.lat, pos.lon) {
+        if (!atHomeForPoi && !homeLive) return@LaunchedEffect
+        if (!TripNavigation.isAtHomeCountry(config, pos.lat, pos.lon)) return@LaunchedEffect
         val n = homeCacheTiles.loadRegion(HomeProgressiveDownloader.REGION_ID, force = true)
         if (n > 0) {
             tilesReady = true
@@ -532,10 +725,11 @@ fun MapGuideScreen(
                 ).ifEmpty { RegionDownloadManager.ONLINE_ZOOMS }
             tileCacheGeneration++
         }
+        homeCachePois = loadHomeCachePois(repo)
     }
 
-    LaunchedEffect(homeLive, hasInternet, hasRealGpsFix, pos.lat, pos.lon) {
-        if (!homeLive || !hasInternet || !hasRealGpsFix) return@LaunchedEffect
+    LaunchedEffect(atHomeForPoi, homeLive, hasInternet, hasRealGpsFix, pos.lat, pos.lon) {
+        if (!atHomeForPoi || !hasInternet || !hasRealGpsFix) return@LaunchedEffect
         suspend fun applyHomeRoutingGraph() {
             val homeGraph = RoutingGraph.reload(context, HomeProgressiveDownloader.REGION_ID)
             if (homeGraph.hasData) routingGraph = homeGraph
@@ -571,53 +765,57 @@ fun MapGuideScreen(
         }
     }
 
-    val allPois = remember(bundle.pois, livePois, homeCachePois) {
-        (bundle.pois + livePois + homeCachePois).distinctBy { it.id }
+    val allPois = remember(bundle.pois, livePois, homeCachePois, atHomeForPoi) {
+        val homePart = if (atHomeForPoi) homeCachePois else emptyList()
+        (bundle.pois + livePois + homePart).distinctBy { it.id }
     }
 
-    val cam = camera ?: return
+    val cam = camera ?: MapCameraMath.defaultCamera(
+        if (hasRealGpsFix && (onSite || homeLive)) pos else null,
+        regionBbox,
+        availableZooms,
+        centerOnPos = hasRealGpsFix && (onSite || homeLive),
+        heading = hasRealGpsFix && (onSite || homeLive),
+    )
 
     val mapW = if (mapSize.width > 0) mapSize.width.toFloat() else 720f
 
     fun applyLocate() {
         when {
-            followGps && (onSite || homeLive) -> {
-                if (showGpsPin && gpsLocked) {
+            useGpsAnchor && followGps && (onSite || homeLive) -> {
+                if (gpsLocked) {
                     camera = cam.lockAnchor(navMapLat, navMapLon)
                 } else {
                     camera = cam.recenter(pos.lat, pos.lon)
                 }
             }
-            !followGps -> {
-                val anchor = upcomingAnchor
-                camera = if (anchor != null) {
-                    MapCameraMath.cameraAt(anchor.lat, anchor.lon, availableZooms, screenW = mapW)
-                } else {
-                    MapCameraMath.defaultCamera(null, regionBbox, availableZooms, screenW = mapW)
-                }
+            useGpsAnchor -> camera = cam.recenter(pos.lat, pos.lon)
+            previewAnchorLocked -> centerOnScheduleAnchor()
+            else -> {
+                val w = if (mapSize.width > 0) mapSize.width.toFloat() else 720f
+                camera = MapCameraMath.cameraAt(previewAnchor.lat, previewAnchor.lon, availableZooms, screenW = w)
             }
-            else -> camera = MapCameraMath.defaultCamera(null, regionBbox, availableZooms, screenW = mapW)
         }
     }
 
     val useNavAnchor = headingModeActive && navAnchor.isReady
-    val poiAnchorLat = when {
-        showGpsPin -> if (useNavAnchor) navMapLat else pos.lat
-        followGps && (onSite || homeLive) -> pos.lat
-        onSite -> pos.lat
-        else -> cam.centerLat
+    val mapAnchorLat = when {
+        useNavAnchor -> navMapLat
+        useGpsAnchor -> pos.lat
+        else -> previewAnchor.lat
     }
-    val poiAnchorLon = when {
-        showGpsPin -> if (useNavAnchor) navMapLon else pos.lon
-        followGps && (onSite || homeLive) -> pos.lon
-        onSite -> pos.lon
-        else -> cam.centerLon
+    val mapAnchorLon = when {
+        useNavAnchor -> navMapLon
+        useGpsAnchor -> pos.lon
+        else -> previewAnchor.lon
     }
-    val mapUser = if (showGpsPin) {
-        val lat = if (useNavAnchor) navMapLat else pos.lat
-        val lon = if (useNavAnchor) navMapLon else pos.lon
-        UserPosition(lat, lon, bearingDeg = headingDeg, speedMps = pos.speedMps, simulated = pos.simulated)
-    } else null
+    val mapUser = UserPosition(
+        mapAnchorLat,
+        mapAnchorLon,
+        bearingDeg = if (useGpsAnchor) headingDeg else null,
+        speedMps = if (useGpsAnchor) pos.speedMps else 0f,
+        simulated = !useGpsAnchor,
+    )
 
     fun cycleRadarRadius() {
         radarRadiusM = MapMath.nextRadarRadiusM(radarRadiusM)
@@ -629,10 +827,17 @@ fun MapGuideScreen(
         if (homeGraph.hasData) routingGraph = homeGraph
     }
 
-    val poiRadiusKm = if (showGpsPin) MapMath.radarRadiusKm(radarRadiusM) else MapMath.POI_VIEW_RADIUS_KM
-
-    val radiusPois = remember(allPois, poiAnchorLat, poiAnchorLon, poiRadiusKm) {
-        PoiLogic.withinRadiusKm(allPois, poiAnchorLat, poiAnchorLon, poiRadiusKm)
+    val radiusPois = remember(allPois, mapAnchorLat, mapAnchorLon, radarRadiusM) {
+        if (radarRadiusM <= 0) {
+            emptyList()
+        } else {
+            PoiLogic.withinRadiusKm(
+                allPois,
+                mapAnchorLat,
+                mapAnchorLon,
+                MapMath.radarRadiusKm(radarRadiusM),
+            )
+        }
     }
 
     val renderCam = remember(cam, mapSize, availableZooms) {
@@ -646,21 +851,21 @@ fun MapGuideScreen(
     }
 
     val viewportAll = remember(
-        renderCam, radiusPois, mapSize, poiAnchorLat, poiAnchorLon, gpsLocked, showGpsPin,
+        renderCam, radiusPois, mapSize, mapAnchorLat, mapAnchorLon, locationLocked,
     ) {
         if (mapSize.width <= 0) return@remember emptyList()
         val w = mapSize.width.toFloat()
         val h = mapSize.height.toFloat()
-        val list = if (gpsLocked && showGpsPin) {
-            // GPS 고정 — pan·줌과 무관하게 반경 내 POI 전부 (geo 뷰포트 필터는 회전·pan과 불일치)
+        val list = if (locationLocked) {
+            // 위치 고정 — pan·줌과 무관하게 반경 내 POI 전부
             radiusPois
         } else {
             PoiLogic.visibleInViewport(
-                radiusPois, renderCam, w, h, poiAnchorLat, poiAnchorLon,
+                radiusPois, renderCam, w, h, mapAnchorLat, mapAnchorLon,
             )
         }
         list.map { p ->
-            val dist = PoiLogic.haversineM(poiAnchorLat, poiAnchorLon, p.lat, p.lon).toInt()
+            val dist = PoiLogic.haversineM(mapAnchorLat, mapAnchorLon, p.lat, p.lon).toInt()
             p.copy(distanceM = dist)
         }.sortedWith(compareBy<Poi> { it.distanceM ?: Int.MAX_VALUE }.thenBy { it.nameKo })
     }
@@ -680,8 +885,16 @@ fun MapGuideScreen(
     }
 
     val emptyListMessage = when {
-        showGpsPin && radarRadiusM == 0 -> "반경 OFF"
+        radarRadiusM == 0 -> "반경 OFF — 원형 배지를 탭해 반경을 켜 주세요"
         !showRestaurant && !showHotel && !showSightseeing -> ui.emptyFilterKind
+        allPois.isEmpty() && poiFetchError != null ->
+            "명소 불러오기 실패 — WiFi 확인 후 잠시 기다려 주세요"
+        allPois.isEmpty() && atHomeForPoi && hasInternet ->
+            "주변 장소 불러오는 중…"
+        allPois.isEmpty() && atHomeForPoi && !hasInternet ->
+            "WiFi 필요 — 연결 후 주변 장소가 표시됩니다"
+        allPois.isEmpty() && !region.downloadComplete -> "다운로드 중 — 명소가 준비되면 표시됩니다"
+        allPois.isEmpty() -> "주변 장소 데이터를 불러오는 중이거나 없습니다"
         kindFiltered.isNotEmpty() && filteredPois.isEmpty() -> ui.emptyStarFilter
         else -> ui.emptyNearby
     }
@@ -695,25 +908,20 @@ fun MapGuideScreen(
         }
     }
 
-    LaunchedEffect(selectedPoiId, poiAnchorLat, poiAnchorLon, onSite, homeLive, routingGraph, filteredPois) {
+    LaunchedEffect(selectedPoiId, mapAnchorLat, mapAnchorLon, routingGraph, filteredPois) {
         val target = selectedPoiId?.let { id -> filteredPois.find { it.id == id } }
         if (target == null) {
             routePoints = emptyList()
             routeDistanceM = null
             return@LaunchedEffect
         }
-        if (!onSite && !homeLive) {
-            routePoints = emptyList()
-            routeDistanceM = null
-            return@LaunchedEffect
-        }
         val graph = routingGraph
         if (graph == null || !graph.hasData) {
-            routePoints = listOf(poiAnchorLat to poiAnchorLon, target.lat to target.lon)
-            routeDistanceM = PoiLogic.haversineM(poiAnchorLat, poiAnchorLon, target.lat, target.lon).toInt()
+            routePoints = listOf(mapAnchorLat to mapAnchorLon, target.lat to target.lon)
+            routeDistanceM = PoiLogic.haversineM(mapAnchorLat, mapAnchorLon, target.lat, target.lon).toInt()
             return@LaunchedEffect
         }
-        val pts = graph.route(poiAnchorLat, poiAnchorLon, target.lat, target.lon)
+        val pts = graph.route(mapAnchorLat, mapAnchorLon, target.lat, target.lon)
         routePoints = pts
         routeDistanceM = if (pts.size >= 2) graph.routeLengthM(pts) else null
     }
@@ -724,17 +932,20 @@ fun MapGuideScreen(
         if (idx >= 0) listState.animateScrollToItem(idx)
     }
 
-    Scaffold(containerColor = Color(0xFFF4F6F8)) { padding ->
-        Row(
-            Modifier
-                .fillMaxSize()
-                .padding(padding)
-                .graphicsLayer { clip = false },
-        ) {
+    Scaffold(
+        containerColor = Color(0xFFF4F6F8),
+        contentWindowInsets = WindowInsets(0, 0, 0, 0),
+    ) { _ ->
+        Box(Modifier.fillMaxSize()) {
+            Column(
+                Modifier
+                    .fillMaxSize()
+                    .graphicsLayer { clip = false },
+            ) {
             Box(
                 Modifier
-                    .weight(0.64f)
-                    .fillMaxHeight()
+                    .weight(0.55f)
+                    .fillMaxWidth()
                     .zIndex(0f)
                     .graphicsLayer { clip = false },
             ) {
@@ -756,23 +967,24 @@ fun MapGuideScreen(
                         screenSize = mapSize,
                         user = mapUser,
                         headingUp = headingModeActive,
-                        gpsLocked = gpsLocked,
+                        gpsLocked = locationLocked,
                         targetBearingDeg = if (headingModeActive) targetHeadingDeg else null,
                         pois = filteredPois,
                         highlightedPoiId = selectedPoiId?.takeIf { id -> filteredPois.any { it.id == id } },
                         routePoints = routePoints,
                         routeDistanceM = routeDistanceM,
-                        userRadiusKm = if (showGpsPin && radarRadiusM > 0) {
+                        userRadiusKm = if (radarRadiusM > 0) {
                             MapMath.radarRadiusKm(radarRadiusM)
                         } else {
                             null
                         },
-                        onGpsLockOff = { disableGpsLock() },
+                        onGpsLockOff = { disableLocationLock() },
                         onPoiClick = { poi ->
                             selectedPoiId = if (selectedPoiId == poi.id) null else poi.id
                         },
                         tileCacheGeneration = tileCacheGeneration,
                         regionClipBbox = distantTileClipBbox,
+                        scaleBarBottomInset = MapContentOverlapDp,
                         modifier = Modifier.fillMaxSize(),
                     )
                     if (regionLoaded && !tilesReady) {
@@ -790,117 +1002,65 @@ fun MapGuideScreen(
                     } else if (!regionLoaded) {
                         CircularProgressIndicator(Modifier.align(Alignment.Center))
                     }
-                    if (regionLoaded && !onSite && !homeLive) {
+                    if (regionLoaded && homeLive && useOnlineMap) {
+                        Text(
+                            ui.homeLiveMode,
+                            modifier = Modifier
+                                .align(Alignment.BottomCenter)
+                                .padding(bottom = 4.dp)
+                                .padding(horizontal = 6.dp),
+                            color = Color(0xFF15803D),
+                            style = MaterialTheme.typography.labelSmall,
+                            fontSize = 9.sp,
+                            lineHeight = 11.sp,
+                            textAlign = TextAlign.Center,
+                        )
+                    } else if (regionLoaded && !useGpsAnchor) {
                         Text(
                             ui.previewMode,
                             modifier = Modifier
                                 .align(Alignment.BottomCenter)
-                                .padding(bottom = 36.dp)
+                                .padding(bottom = MapContentOverlapDp + 8.dp)
                                 .padding(horizontal = 8.dp),
                             color = Color(0xFF64748B),
                             style = MaterialTheme.typography.labelSmall,
                             textAlign = TextAlign.Center,
                         )
-                    } else if (regionLoaded && homeLive && useOnlineMap) {
-                        Text(
-                            ui.homeLiveMode,
-                            modifier = Modifier
-                                .align(Alignment.BottomCenter)
-                                .padding(bottom = 6.dp)
-                                .padding(horizontal = 8.dp),
-                            color = Color(0xFF15803D),
-                            style = MaterialTheme.typography.labelSmall,
-                            textAlign = TextAlign.Center,
-                        )
                     }
-                    IconButton(
-                        onClick = onOpenOptions,
-                        modifier = Modifier
-                            .align(Alignment.TopStart)
-                            .mapChromeTop()
-                            .padding(start = 2.dp),
-                    ) {
-                        Icon(Icons.Default.Settings, contentDescription = ui.options, tint = Color(0xFF334155))
-                    }
-                    IconButton(
-                        onClick = onMainHub,
-                        modifier = Modifier
-                            .align(Alignment.TopStart)
-                            .mapChromeTop()
-                            .padding(start = 44.dp),
-                    ) {
-                        Text(ui.main, color = Color(0xFF2563EB), style = MaterialTheme.typography.labelSmall)
-                    }
-                    Text(
-                        mapHeaderTitle,
+                    MapFullTopChrome(
+                        title = mapHeaderTitle,
+                        ui = ui,
+                        radarRadiusM = radarRadiusM,
+                        locationLocked = locationLocked,
+                        lockContentDescription = lockContentDescription,
+                        onOpenOptions = onOpenOptions,
+                        onMainHub = onMainHub,
+                        onToggleLocationLock = { toggleLocationLock() },
+                        onCycleRadar = { cycleRadarRadius() },
                         modifier = Modifier
                             .align(Alignment.TopCenter)
-                            .mapChromeTop()
-                            .padding(start = 52.dp, end = 52.dp),
-                        style = TextStyle(
-                            fontSize = 18.sp,
-                            fontWeight = FontWeight.Bold,
-                            shadow = Shadow(color = Color(0xCCFFFFFF), blurRadius = 6f),
-                        ),
-                        color = Color(0xFF0F172A),
-                        textAlign = TextAlign.Center,
-                        maxLines = 2,
+                            .fillMaxWidth()
+                            .mapTopChromeInset()
+                            .zIndex(10f),
                     )
-                    Row(
-                        modifier = Modifier
-                            .align(Alignment.TopEnd)
-                            .mapChromeTop()
-                            .padding(end = 1.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        if (showGpsPin) {
-                            IconButton(onClick = { toggleGpsLock() }) {
-                                Icon(
-                                    Icons.Default.MyLocation,
-                                    contentDescription = if (gpsLocked) "GPS 고정" else "GPS 고정 해제",
-                                    tint = if (gpsLocked) Color(0xFF15803D) else Color(0xFF64748B),
-                                )
-                            }
-                            RadarRadiusBadge(
-                                radarRadiusM = radarRadiusM,
-                                onCycle = { cycleRadarRadius() },
-                            )
-                        } else {
-                            IconButton(onClick = { applyLocate() }) {
-                                Icon(Icons.Default.Refresh, contentDescription = ui.reset, tint = Color(0xFF3D8B5E))
-                            }
-                            IconToggleButton(
-                                checked = followGps,
-                                enabled = gpsControlEnabled,
-                                onCheckedChange = { enabled ->
-                                    followGps = enabled
-                                    applyLocate()
-                                },
-                            ) {
-                                Icon(
-                                    Icons.Default.MyLocation,
-                                    contentDescription = if (followGps) ui.followGps else ui.followTrip,
-                                    tint = if (followGps) Color(0xFF15803D) else Color(0xFF64748B),
-                                )
-                            }
-                        }
-                    }
                 }
             }
 
             Column(
                 Modifier
-                    .weight(0.36f)
-                    .fillMaxHeight()
+                    .weight(0.45f)
+                    .fillMaxWidth()
+                    .offset(y = -MapContentOverlapDp)
                     .zIndex(2f)
                     .background(MapUiColors.sidePanelBg)
-                    .mapChromeTop()
-                    .padding(start = 6.dp, end = 6.dp),
+                    .padding(horizontal = 4.dp, vertical = 2.dp),
             ) {
                 Row(
-                    modifier = Modifier.fillMaxWidth(),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(34.dp),
                     verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(4.dp),
+                    horizontalArrangement = Arrangement.spacedBy(3.dp),
                 ) {
                     Row(
                         modifier = Modifier
@@ -912,7 +1072,8 @@ fun MapGuideScreen(
                         FilterChip(
                             selected = showRestaurant,
                             onClick = { showRestaurant = !showRestaurant },
-                            label = { Text(ui.restaurant, style = MaterialTheme.typography.labelSmall) },
+                            label = { Text(ui.restaurant, style = MaterialTheme.typography.labelSmall, fontSize = 11.sp) },
+                            modifier = Modifier.height(28.dp),
                             colors = FilterChipDefaults.filterChipColors(
                                 selectedContainerColor = PoiColors.restaurant.copy(alpha = 0.25f),
                             ),
@@ -920,7 +1081,8 @@ fun MapGuideScreen(
                         FilterChip(
                             selected = showHotel,
                             onClick = { showHotel = !showHotel },
-                            label = { Text(ui.hotel, style = MaterialTheme.typography.labelSmall) },
+                            label = { Text(ui.hotel, style = MaterialTheme.typography.labelSmall, fontSize = 11.sp) },
+                            modifier = Modifier.height(28.dp),
                             colors = FilterChipDefaults.filterChipColors(
                                 selectedContainerColor = PoiColors.hotel.copy(alpha = 0.25f),
                             ),
@@ -928,7 +1090,8 @@ fun MapGuideScreen(
                         FilterChip(
                             selected = showSightseeing,
                             onClick = { showSightseeing = !showSightseeing },
-                            label = { Text(ui.sight, style = MaterialTheme.typography.labelSmall) },
+                            label = { Text(ui.sight, style = MaterialTheme.typography.labelSmall, fontSize = 11.sp) },
+                            modifier = Modifier.height(28.dp),
                             colors = FilterChipDefaults.filterChipColors(
                                 selectedContainerColor = PoiColors.sight.copy(alpha = 0.25f),
                             ),
@@ -940,21 +1103,19 @@ fun MapGuideScreen(
                         ui = ui,
                     )
                 }
-                if (!onSite && !homeLive) {
-                    Text(
-                        ui.previewRouteHint,
-                        style = MaterialTheme.typography.labelSmall,
-                        color = Color(0xFF94A3B8),
-                        modifier = Modifier.padding(top = 2.dp, bottom = 2.dp),
-                    )
-                }
                 Text(
                     ui.routeHint,
                     style = MaterialTheme.typography.labelSmall,
                     color = Color(0xFF64748B),
-                    modifier = Modifier.padding(bottom = 4.dp),
+                    fontSize = 10.sp,
+                    lineHeight = 12.sp,
+                    modifier = Modifier.padding(bottom = 2.dp),
                 )
-                LazyColumn(state = listState, modifier = Modifier.fillMaxSize()) {
+                LazyColumn(
+                    state = listState,
+                    modifier = Modifier.weight(1f),
+                    contentPadding = PaddingValues(bottom = 4.dp),
+                ) {
                     if (filteredPois.isEmpty()) {
                         item { Text(emptyListMessage, color = Color.Gray, modifier = Modifier.padding(8.dp)) }
                     } else {
@@ -962,7 +1123,8 @@ fun MapGuideScreen(
                             val loc = localized(p)
                             PoiListItem(
                                 poi = p,
-                                displayName = loc.name,
+                                displayName = loc.localName,
+                                readingName = loc.readingName,
                                 description = loc.description,
                                 accent = PoiColors.accent(p),
                                 typeLabel = loc.typeLabel,
@@ -980,6 +1142,72 @@ fun MapGuideScreen(
                 }
             }
         }
+    }
+    }
+}
+
+private val MapContentOverlapDp = 36.dp
+private val MapChromeBtn = 36.dp
+private val MapChromeBarH = 40.dp
+private val MapChromeIcon = 22.dp
+
+/** 지도 상단 한 줄 — 톱니·뒤로·지역명·반경·위치 고정 */
+@Composable
+private fun MapFullTopChrome(
+    title: String,
+    ui: MapUiStrings,
+    radarRadiusM: Int,
+    locationLocked: Boolean,
+    lockContentDescription: String,
+    onOpenOptions: () -> Unit,
+    onMainHub: () -> Unit,
+    onToggleLocationLock: () -> Unit,
+    onCycleRadar: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Row(
+        modifier = modifier.heightIn(min = MapChromeBarH),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        IconButton(onClick = onOpenOptions, modifier = Modifier.size(MapChromeBtn)) {
+            Icon(
+                Icons.Default.Settings,
+                contentDescription = ui.options,
+                tint = Color(0xFF334155),
+                modifier = Modifier.size(MapChromeIcon),
+            )
+        }
+        IconButton(onClick = onMainHub, modifier = Modifier.size(MapChromeBtn)) {
+            Icon(
+                Icons.AutoMirrored.Filled.ArrowBack,
+                contentDescription = ui.main,
+                tint = Color(0xFF2563EB),
+                modifier = Modifier.size(MapChromeIcon),
+            )
+        }
+        Text(
+            text = title,
+            modifier = Modifier
+                .weight(1f)
+                .padding(horizontal = 4.dp),
+            style = TextStyle(
+                fontSize = 15.sp,
+                fontWeight = FontWeight.Bold,
+                shadow = Shadow(color = Color(0xCCFFFFFF), blurRadius = 6f),
+            ),
+            color = Color(0xFF0F172A),
+            textAlign = TextAlign.Center,
+            maxLines = 2,
+            overflow = TextOverflow.Ellipsis,
+        )
+        MapGpsRadiusChromeRow(
+            radarRadiusM = radarRadiusM,
+            onCycleRadar = onCycleRadar,
+            gpsLocked = locationLocked,
+            gpsInteractive = true,
+            onToggleGpsLock = onToggleLocationLock,
+            lockContentDescription = lockContentDescription,
+        )
     }
 }
 
@@ -1009,18 +1237,19 @@ private fun RecommendDegreeDropdown(
             selected = false,
             onClick = { expanded = true },
             label = {
-                Text(label, style = MaterialTheme.typography.labelSmall, maxLines = 1)
+                Text(label, style = MaterialTheme.typography.labelSmall, fontSize = 11.sp, maxLines = 1)
             },
             trailingIcon = {
                 Icon(
                     Icons.Default.ArrowDropDown,
                     contentDescription = null,
-                    modifier = Modifier.size(16.dp),
+                    modifier = Modifier.size(14.dp),
                 )
             },
             modifier = Modifier
+                .height(28.dp)
                 .onSizeChanged { chipSize = it }
-                .widthIn(min = 76.dp),
+                .widthIn(min = 72.dp),
             colors = FilterChipDefaults.filterChipColors(
                 containerColor = if (minStarFilter > 0f) {
                     Color(0xFFD1FAE5)

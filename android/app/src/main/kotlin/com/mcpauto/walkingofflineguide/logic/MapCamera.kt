@@ -45,7 +45,7 @@ object MapCameraMath {
     const val SPAN_MIN_M = 500.0
     /** GPS 해제·지역 탐색 */
     const val SPAN_MAX_M = 5000.0
-    const val SPAN_DEFAULT_M = 1500.0
+    const val SPAN_DEFAULT_M = 1000.0
     /** 헤딩업(GPS 고정) — 최대 확대 200m · 최대 축소 2km */
     const val SPAN_HEADING_MIN_M = 200.0
     const val SPAN_HEADING_DEFAULT_M = 1000.0

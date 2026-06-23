@@ -7,6 +7,7 @@ import com.mcpauto.walkingofflineguide.data.STOP_DOWNLOAD_RADIUS_KM
 import com.mcpauto.walkingofflineguide.data.DownloadJobState
 import com.mcpauto.walkingofflineguide.data.PoiBundle
 import com.mcpauto.walkingofflineguide.data.RegionRecord
+import com.mcpauto.walkingofflineguide.data.SafeStorage
 import com.mcpauto.walkingofflineguide.data.TripStore
 import com.mcpauto.walkingofflineguide.logic.MapMath
 import com.mcpauto.walkingofflineguide.logic.PoiLogic
@@ -24,10 +25,7 @@ import kotlinx.serialization.json.Json
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import java.io.File
-import java.io.FileOutputStream
 import java.util.concurrent.TimeUnit
-import java.util.zip.ZipEntry
-import java.util.zip.ZipOutputStream
 import kotlin.coroutines.coroutineContext
 
 data class DownloadProgress(
@@ -224,7 +222,7 @@ class RegionDownloadManager(
                 )
                 val geoInfo = geocoder.search(geo.name, countryLabel)
                 val desc = geoInfo?.description.orEmpty()
-                File(dir, "description.txt").writeText(desc)
+                SafeStorage.atomicWriteText(File(dir, "description.txt"), desc)
                 record = record.copy(descriptionKo = desc)
                 globalDone += 50_000
                 Thread.sleep(1100)
@@ -237,10 +235,15 @@ class RegionDownloadManager(
                     DownloadProgress(id, geo.name, globalDone, totalEstimate, "POI", phaseDisplayPercent("POI", 5), "명소 검색 중…"),
                 )
                 val raw = overpass.fetchPois(bbox, homeLang)
+                if (raw.isEmpty()) {
+                    throw IllegalStateException(
+                        "명소(POI) 데이터를 받지 못했습니다. WiFi 연결·Overpass 서버 상태를 확인해 주세요.",
+                    )
+                }
                 if (cancelled) throw CancellationException("download paused")
                 val pois = PoiLocalization.enrichForKoreanHome(raw, destLang, homeLang)
                 val bundle = PoiBundle(region = id, labelKo = geo.name, bbox = bbox, count = pois.size, pois = pois)
-                poiFile.writeText(json.encodeToString(bundle))
+                SafeStorage.atomicWriteText(poiFile, json.encodeToString(bundle))
                 globalDone += 120_000
             }
             if (cancelled) throw CancellationException("download paused")
@@ -258,7 +261,10 @@ class RegionDownloadManager(
                     ),
                 )
                 runCatching {
-                    File(dir, "routing_graph.json").writeText(routingBuilder.buildAndSerialize(bbox))
+                    SafeStorage.atomicWriteText(
+                        File(dir, "routing_graph.json"),
+                        routingBuilder.buildAndSerialize(bbox),
+                    )
                 }
                 onProgress(
                     DownloadProgress(id, geo.name, globalDone, totalEstimate, "도보경로", phaseDisplayPercent("도보경로", 100)),
@@ -272,8 +278,8 @@ class RegionDownloadManager(
             )
             val zipFile = File(dir, "tiles.zip")
             val tileBudget = (totalEstimate - globalDone).coerceAtLeast(1L)
-            val (bytes, tileCount) = downloadTiles(bbox, dir, zipFile) { done ->
-                val sub = ((done * 100) / tileBudget).toInt().coerceIn(0, 100)
+            val (bytes, tileCount, tilesTotal) = downloadTiles(bbox, dir, zipFile) { done, tilesDone, total ->
+                val sub = if (total > 0) (tilesDone * 100 / total).coerceIn(0, 100) else ((done * 100) / tileBudget).toInt().coerceIn(0, 100)
                 onProgress(
                     DownloadProgress(
                         id,
@@ -282,6 +288,7 @@ class RegionDownloadManager(
                         totalEstimate,
                         "지도",
                         phaseDisplayPercent("지도", sub),
+                        phaseDetail = if (total > 0) "타일 $tilesDone/$total" else "",
                     ),
                 )
             }
@@ -302,17 +309,29 @@ class RegionDownloadManager(
         results
     }
 
+    private fun countTilesInBbox(bbox: Bbox, zooms: List<Int> = TILE_ZOOMS): Int {
+        var n = 0
+        for (z in zooms) {
+            val xr = MapMath.tileXRange(bbox, z)
+            val yr = MapMath.tileYRange(bbox, z)
+            n += (xr.last - xr.first + 1) * (yr.last - yr.first + 1)
+        }
+        return n.coerceAtLeast(1)
+    }
+
     private suspend fun downloadTiles(
         bbox: Bbox,
         regionDir: File,
         outZip: File,
-        onPartial: (Long) -> Unit,
-    ): Pair<Long, Int> = withContext(Dispatchers.IO) {
+        onPartial: (bytes: Long, tilesDone: Int, tilesTotal: Int) -> Unit,
+    ): Triple<Long, Int, Int> = withContext(Dispatchers.IO) {
         val tilesRoot = File(regionDir, "tiles").also { it.mkdirs() }
         val progressFile = File(regionDir, "tiles_progress.json")
         val doneKeys = loadTileProgress(progressFile)
+        val tilesTotal = countTilesInBbox(bbox)
         var bytes = tilesRoot.walkTopDown().filter { it.isFile && it.extension == "png" }.sumOf { it.length() }
         var count = doneKeys.size
+        onPartial(bytes, count, tilesTotal)
 
         for (z in TILE_ZOOMS) {
             val xr = MapMath.tileXRange(bbox, z)
@@ -338,40 +357,31 @@ class RegionDownloadManager(
                     tileFile.parentFile?.mkdirs()
                     tileFile.writeBytes(png)
                     doneKeys.add(key)
-                    if (doneKeys.size % 12 == 0) saveTileProgress(progressFile, doneKeys)
+                    if (doneKeys.size % 8 == 0) saveTileProgress(progressFile, doneKeys)
                     bytes += png.size
                     count++
-                    onPartial(bytes)
-                    Thread.sleep(120)
+                    onPartial(bytes, count, tilesTotal)
+                    if (count % 2 == 0) Thread.sleep(80) else Thread.sleep(40)
                 }
             }
         }
         saveTileProgress(progressFile, doneKeys)
-        zipTilesFolder(tilesRoot, outZip)
-        bytes to count
+        SafeStorage.zipTilesFolder(tilesRoot, outZip)
+        Triple(bytes, count, tilesTotal)
     }
 
     private fun loadTileProgress(file: File): MutableSet<String> {
         if (!file.exists()) return mutableSetOf()
         return runCatching {
             json.decodeFromString<List<String>>(file.readText()).toMutableSet()
-        }.getOrElse { mutableSetOf() }
+        }.getOrElse {
+            SafeStorage.quarantineCorrupt(file)
+            mutableSetOf()
+        }
     }
 
     private fun saveTileProgress(file: File, keys: Set<String>) {
-        file.writeText(json.encodeToString(keys.toList()))
-    }
-
-    private fun zipTilesFolder(tilesRoot: File, outZip: File) {
-        if (!tilesRoot.exists()) return
-        ZipOutputStream(FileOutputStream(outZip)).use { zip ->
-            tilesRoot.walkTopDown().filter { it.isFile && it.extension == "png" }.forEach { f ->
-                val rel = f.relativeTo(tilesRoot).path.replace('\\', '/')
-                zip.putNextEntry(ZipEntry("tiles/$rel"))
-                zip.write(f.readBytes())
-                zip.closeEntry()
-            }
-        }
+        SafeStorage.atomicWriteText(file, json.encodeToString(keys.toList()))
     }
 
     companion object {

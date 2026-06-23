@@ -40,6 +40,35 @@ object TripNavigation {
             if (leg.endPoint.confirmed && leg.endPoint.name.isNotBlank()) add(leg.endPoint)
         }
 
+    /** 허브 미리보기 — 해당 도시 일정상 시작·경유·도착 좌표 (없으면 region 중심) */
+    fun scheduleAnchorForCity(config: TripConfig, region: RegionRecord): GeoAnchor {
+        for (leg in config.legs.filter { it.legConfirmed }) {
+            for (pt in legPoints(leg)) {
+                if (!regionMatchesCity(region, pt.name)) continue
+                val lat = pt.lat.takeIf { it != 0.0 } ?: region.lat
+                val lon = pt.lon.takeIf { it != 0.0 } ?: region.lon
+                return GeoAnchor(lat, lon, pt.name)
+            }
+        }
+        return GeoAnchor(region.lat, region.lon, region.cityName)
+    }
+
+    /** GPS가 여행국(비모국) 다운로드 지역 근처인지 */
+    fun isAtDestinationCountry(
+        config: TripConfig,
+        regions: List<RegionRecord>,
+        lat: Double,
+        lon: Double,
+    ): Boolean {
+        if (isAtHomeCountry(config, lat, lon)) return false
+        val travel = regions.filter { it.downloadComplete && !isHomeRegion(config, it) }
+        if (travel.isEmpty()) return false
+        return travel.any { r ->
+            PoiLogic.haversineM(lat, lon, r.lat, r.lon) <= 120_000.0 ||
+                PoiLogic.inBbox(lat, lon, r.bbox)
+        }
+    }
+
     /** 아직 방문하지 않은 첫 여행 지점 (일정 순) */
     fun upcomingTravelAnchor(config: TripConfig, regions: List<RegionRecord>): GeoAnchor? {
         val completed = regions.filter { it.downloadComplete }
@@ -105,6 +134,23 @@ object TripNavigation {
             home.contains(label, ignoreCase = true)
     }
 
+    /** 모국 실시간·홈 캐시 지도 region (온라인 stub·home_live_cache 포함) */
+    fun isHomeMapRegion(config: TripConfig, region: RegionRecord): Boolean =
+        region.id == MapPolicy.HOME_LIVE_ONLINE_ID ||
+            region.id == HOME_LIVE_CACHE_REGION_ID ||
+            isHomeRegion(config, region)
+
+    /** 모국 GPS + 해당 region — POI·홈 캐시 (WiFi 불필요) */
+    fun isAtHomeForPoi(
+        config: TripConfig,
+        pos: UserPosition,
+        region: RegionRecord,
+        hasRealGpsFix: Boolean,
+    ): Boolean =
+        hasRealGpsFix && !pos.simulated &&
+            isAtHomeCountry(config, pos.lat, pos.lon) &&
+            isHomeMapRegion(config, region)
+
     /** 모국 GPS + WiFi + 모국 region — MapGuideScreen 일반 지도 (온라인 타일) */
     fun isHomeLiveMode(
         config: TripConfig,
@@ -116,7 +162,9 @@ object TripNavigation {
         hasRealGpsFix && !pos.simulated &&
             hasInternet &&
             isAtHomeCountry(config, pos.lat, pos.lon) &&
-            isHomeRegion(config, region)
+            isHomeMapRegion(config, region)
+
+    const val HOME_LIVE_CACHE_REGION_ID = "home_live_cache"
 
     /** GPS가 다운로드 지역 안(또는 15km 이내) */
     fun isGpsNearRegion(pos: UserPosition, region: RegionRecord, bbox: Bbox): Boolean {

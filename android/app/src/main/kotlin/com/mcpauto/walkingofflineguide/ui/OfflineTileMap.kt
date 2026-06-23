@@ -9,6 +9,7 @@ import android.graphics.Region
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -49,6 +50,10 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.text.PlatformTextStyle
+import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.zIndex
 import com.mcpauto.walkingofflineguide.data.Bbox
 import com.mcpauto.walkingofflineguide.data.Poi
 import com.mcpauto.walkingofflineguide.data.TileStore
@@ -92,6 +97,8 @@ fun OfflineTileMap(
     tileCacheGeneration: Int = 0,
     /** 활성 행정지역 1개 — 타일·온라인 프리페치 클립 */
     regionClipBbox: Bbox? = null,
+    /** 하단 콘텐츠 탭 겹침 높이 — 척도를 그 위에 배치 */
+    scaleBarBottomInset: Dp = 36.dp,
     modifier: Modifier = Modifier,
 ) {
     val cameraRef = rememberUpdatedState(camera)
@@ -104,12 +111,18 @@ fun OfflineTileMap(
     val secondaryRef = rememberUpdatedState(secondaryTileStore)
     val headingUpRef = rememberUpdatedState(headingUp)
     val gpsLockedRef = rememberUpdatedState(gpsLocked)
+    val userRef = rememberUpdatedState(user)
     val targetBearingRef = rememberUpdatedState(targetBearingDeg)
     val userRadiusRef = rememberUpdatedState(userRadiusKm)
     val onGpsLockOffRef = rememberUpdatedState(onGpsLockOff)
     val regionClipRef = rememberUpdatedState(regionClipBbox)
+    val highlightedPoiRef = rememberUpdatedState(highlightedPoiId)
+    val routePointsRef = rememberUpdatedState(routePoints)
     var smoothBearingDeg by remember { mutableFloatStateOf(0f) }
     var onlineRev by remember { mutableIntStateOf(0) }
+    // POI 목록 변경 시 오버레이 재합성
+    @Suppress("UNUSED_VARIABLE")
+    val poiComposeTick = pois.size to pois.hashCode() to highlightedPoiId
 
     LaunchedEffect(headingUp, gpsLocked) {
         if (!headingUp && !gpsLocked) {
@@ -205,13 +218,25 @@ fun OfflineTileMap(
                             )
                             val renderCam = buildRenderCamera(c, user, hu, gpsLockedRef.value, z)
                             val locked = gpsLockedRef.value && user != null
+                            val headingMargin = if (hu) headingCoverMargin(w, h, rot) else 1f
+                            val canvasSide = (maxOf(w, h) * headingMargin * 1.06f)
+                                .toInt()
+                                .coerceAtMost(HEADING_CANVAS_MAX)
+                                .coerceAtLeast(1)
+                            val canvasW = canvasSide.toFloat()
+                            val canvasH = canvasSide.toFloat()
                             var best: Poi? = null
                             var bestD = 48f
                             poisRef.value.forEach { p ->
-                                val (px, py) = viewportMapPoint(
-                                    p.lat, p.lon, renderCam, w, h, locked, user, hu, rot,
+                                val (px, py) = poiViewportScreenPoint(
+                                    p.lat, p.lon, renderCam, w, h, canvasW, canvasH, locked, user,
                                 )
-                                val d = hypot(px - offset.x, py - offset.y)
+                                val (sx, sy) = if (hu && kotlin.math.abs(rot) > 0.5f) {
+                                    viewportToScreen(px, py, rot, w / 2f, h / 2f)
+                                } else {
+                                    px to py
+                                }
+                                val d = hypot(sx - offset.x, sy - offset.y)
                                 if (d < bestD) {
                                     bestD = d
                                     best = p
@@ -250,6 +275,9 @@ fun OfflineTileMap(
                                 }
 
                                 if (pan.x != 0f || pan.y != 0f) {
+                                    if (gpsLockedRef.value) {
+                                        onGpsLockOffRef.value?.invoke()
+                                    }
                                     val bearing = if (heading) {
                                         MapHeading.mapRotationDeg(mapBearingRef.value)
                                     } else {
@@ -294,6 +322,7 @@ fun OfflineTileMap(
 
                     Box(
                         Modifier
+                            .zIndex(1f)
                             .layout { measurable, constraints ->
                                 val placeable = measurable.measure(
                                     Constraints.fixed(canvasW, canvasH),
@@ -414,108 +443,66 @@ fun OfflineTileMap(
                                 screenCompY = compY,
                                 clipBbox = regionClipRef.value?.takeIf { MapCameraMath.bboxIsValid(it) },
                             )
-                        }
-                    }
 
-                    // POI·경로 — 뷰포트 오버레이(회전 레이어 밖). 타일만 회전하고 핀은 화면 좌표에 고정.
-                    Canvas(
-                        Modifier
-                            .fillMaxSize()
-                            .graphicsLayer { clip = false },
-                    ) {
-                        val vw = size.width.toFloat().coerceAtLeast(1f)
-                        val vh = size.height.toFloat().coerceAtLeast(1f)
-                        val cam = cameraRef.value
-                        val rot = layerRotationDeg
-                        val pool = activeZoomPool()
-                        val anchorLat = when {
-                            user != null && (headingUp || gpsLocked) -> user.lat
-                            else -> cam.centerLat
-                        }
-                        val z = MapCameraMath.pickRenderZoom(anchorLat, vfW, cam.visibleSpanM, pool)
-                        val renderCam = buildRenderCamera(cam, user, headingUp, gpsLocked, z)
-                        val gpsAnchor = gpsLocked && user != null
-                        val nc = drawContext.canvas.nativeCanvas
-
-                        if (routePoints.size >= 2) {
+                            // POI·경로 — 타일과 동일 overscan·동일 회전 레이어 (2D 북쪽 위, 이중 회전 없음)
                             val routePath = android.graphics.Path()
-                            routePoints.forEachIndexed { idx, (lat, lon) ->
-                                val (px, py) = viewportMapPoint(
-                                    lat, lon, renderCam, vw, vh, gpsAnchor, user, headingUp, rot,
-                                )
-                                if (idx == 0) routePath.moveTo(px, py) else routePath.lineTo(px, py)
-                            }
-                            nc.drawPath(routePath, routeGlowPaint)
-                            nc.drawPath(routePath, routeLinePaint)
-                        }
-
-                        if (!gpsLocked) {
-                            userRadiusRef.value?.takeIf { it > 0.0 }?.let { radiusKm ->
-                                val center = user?.let { u ->
-                                    val (px, py) = viewportMapPoint(
-                                        u.lat, u.lon, renderCam, vw, vh, gpsAnchor, user, headingUp, rot,
+                            if (routePointsRef.value.size >= 2) {
+                                routePointsRef.value.forEachIndexed { idx, (lat, lon) ->
+                                    val (px, py) = mapContentPoint(
+                                        lat, lon, renderCam, vfW, vfH, drawW, drawH, gpsAnchor, user,
                                     )
-                                    Offset(px, py)
-                                } ?: Offset(vw / 2f, vh / 2f)
-                                val rPx = metersToScreenRadius(renderCam.visibleSpanM, vw, radiusKm * 1000.0)
-                                drawCircle(
-                                    Color(0x552563EB),
-                                    radius = rPx,
-                                    center = center,
-                                    style = Stroke(width = 2.5f),
-                                )
-                                drawCircle(
-                                    Color(0x3322C55E),
-                                    radius = rPx,
-                                    center = center,
-                                    style = Stroke(width = 1f),
-                                )
+                                    if (idx == 0) routePath.moveTo(px, py) else routePath.lineTo(px, py)
+                                }
+                                nc.drawPath(routePath, routeGlowPaint)
+                                nc.drawPath(routePath, routeLinePaint)
                             }
-                        }
 
-                        pois.forEach { p ->
-                            val (px, py) = viewportMapPoint(
-                                p.lat, p.lon, renderCam, vw, vh, gpsAnchor, user, headingUp, rot,
-                            )
-                            if (px < -48f || py < -48f || px > vw + 48f || py > vh + 48f) return@forEach
-                            val color = PoiColors.accent(p)
-                            val selected = p.id == highlightedPoiId
-                            val radius = if (selected) 14f else 5f
-                            if (selected) {
-                                drawCircle(Color(0x99F59E0B), radius = 26f, center = Offset(px, py))
-                                drawCircle(Color(0xFFF59E0B), radius = 20f, center = Offset(px, py))
-                            }
-                            drawCircle(color, radius = radius, center = Offset(px, py))
-                            drawCircle(
-                                Color.White,
-                                radius = if (selected) 5f else 2f,
-                                center = Offset(px, py),
-                            )
-                            if (!selected && pois.size <= MAX_POI_LABELS_ON_MAP) {
-                                val rating = PoiLogic.formatRating(PoiLogic.displayRating(p))
-                                nc.drawText("★$rating", px - 10f, py + 14f, poiLabelPaint)
-                            }
-                        }
-
-                        if (!gpsLocked) {
-                            user?.let { u ->
-                                val (px, py) = viewportMapPoint(
-                                    u.lat, u.lon, renderCam, vw, vh, false, user, headingUp, rot,
-                                )
-                                drawCircle(Color(0x5922C55E), radius = 14f, center = Offset(px, py))
-                                drawCircle(Color(0xFF22C55E), radius = 7f, center = Offset(px, py))
-                                u.bearingDeg?.let { b ->
-                                    val rad = Math.toRadians(b.toDouble())
-                                    val tipX = px + sin(rad).toFloat() * 22f
-                                    val tipY = py - cos(rad).toFloat() * 22f
-                                    drawLine(
-                                        Color(0xFF166534),
-                                        Offset(px, py),
-                                        Offset(tipX, tipY),
-                                        strokeWidth = 5f,
+                            if (!gpsLocked) {
+                                userRadiusRef.value?.takeIf { it > 0.0 }?.let { radiusKm ->
+                                    val center = user?.let { u ->
+                                        val (px, py) = mapContentPoint(
+                                            u.lat, u.lon, renderCam, vfW, vfH, drawW, drawH, gpsAnchor, user,
+                                        )
+                                        Offset(px, py)
+                                    } ?: Offset(drawW / 2f, drawH / 2f)
+                                    val rPx = metersToScreenRadius(renderCam.visibleSpanM, vfW, radiusKm * 1000.0)
+                                    drawCircle(
+                                        Color(0x552563EB),
+                                        radius = rPx,
+                                        center = center,
+                                        style = Stroke(width = 2.5f),
+                                    )
+                                    drawCircle(
+                                        Color(0x3322C55E),
+                                        radius = rPx,
+                                        center = center,
+                                        style = Stroke(width = 1f),
                                     )
                                 }
                             }
+
+                            if (!gpsLocked) {
+                                user?.let { u ->
+                                    val (px, py) = mapContentPoint(
+                                        u.lat, u.lon, renderCam, vfW, vfH, drawW, drawH, false, user,
+                                    )
+                                    drawCircle(Color(0x5922C55E), radius = 14f, center = Offset(px, py))
+                                    drawCircle(Color(0xFF22C55E), radius = 7f, center = Offset(px, py))
+                                    u.bearingDeg?.let { b ->
+                                        val rad = Math.toRadians(b.toDouble())
+                                        val tipX = px + sin(rad).toFloat() * 22f
+                                        val tipY = py - cos(rad).toFloat() * 22f
+                                        drawLine(
+                                            Color(0xFF166534),
+                                            Offset(px, py),
+                                            Offset(tipX, tipY),
+                                            strokeWidth = 5f,
+                                        )
+                                    }
+                                }
+                            }
+
+                            // POI는 최상위 화면 오버레이(PoiOverlayLayer)에서 그림
                         }
                     }
 
@@ -523,6 +510,7 @@ fun OfflineTileMap(
                     Canvas(
                         Modifier
                             .fillMaxSize()
+                            .zIndex(3f)
                             .graphicsLayer { clip = false },
                     ) {
                         val pivot = Offset(size.width / 2f, size.height / 2f)
@@ -553,6 +541,25 @@ fun OfflineTileMap(
                         )
                     }
                 }
+
+                    // POI — 타일·GPS 위 최상위 (화면 좌표, 회전 클리핑 없음)
+                    PoiOverlayLayer(
+                        vfW = vfW,
+                        vfH = vfH,
+                        canvasW = canvasW.toFloat(),
+                        canvasH = canvasH.toFloat(),
+                        smoothBearingDeg = smoothBearingDeg,
+                        pois = pois,
+                        highlightedPoiId = highlightedPoiId,
+                        camera = camera,
+                        user = user,
+                        headingUp = headingUp,
+                        gpsLocked = gpsLocked,
+                        activeZoomPool = ::activeZoomPool,
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .zIndex(4f),
+                    )
                 }
             }
 
@@ -560,34 +567,32 @@ fun OfflineTileMap(
             val pool = activeZoomPool()
             val renderZ = MapCameraMath.pickRenderZoom(camera.centerLat, mapW, camera.visibleSpanM, pool)
             val mpp = camera.visibleSpanM / mapW
-            val (barM, barPx) = MapCameraMath.scaleBarMeters(mpp)
+            val (baseM, basePx) = MapCameraMath.scaleBarMeters(mpp)
+            val barM = baseM * 2
+            val barWidthPx = (basePx * 2f).coerceIn(32f, 200f)
             val barLabel = if (barM >= 1000) "${barM / 1000}km" else "${barM}m"
             val density = LocalDensity.current
-            val barWidthDp: Dp = with(density) { barPx.toDp() }
+            val barWidthDp: Dp = with(density) { barWidthPx.toDp() }
+            Box(
+                modifier = Modifier
+                    .align(Alignment.BottomStart)
+                    .zIndex(5f)
+                    .padding(start = 10.dp, bottom = scaleBarBottomInset + 10.dp),
+            ) {
+                MapScaleRuler(label = barLabel, barWidth = barWidthDp)
+            }
             Box(
                 modifier = Modifier
                     .align(Alignment.BottomStart)
                     .fillMaxWidth()
-                    .padding(10.dp),
+                    .zIndex(5f)
+                    .padding(start = 10.dp, end = 10.dp, bottom = scaleBarBottomInset + 10.dp),
             ) {
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     verticalAlignment = Alignment.Bottom,
                 ) {
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text(
-                            barLabel,
-                            color = Color(0xFF1E293B),
-                            fontSize = 11.sp,
-                            modifier = Modifier.padding(bottom = 4.dp),
-                        )
-                        Box(
-                            modifier = Modifier
-                                .width(barWidthDp.coerceAtLeast(40.dp))
-                                .height(4.dp)
-                                .background(Color(0xFF1E293B), RoundedCornerShape(2.dp)),
-                        )
-                    }
+                    Spacer(Modifier.weight(1f))
                     Column(horizontalAlignment = Alignment.End) {
                         routeDistanceM?.let { d ->
                             Text(
@@ -610,12 +615,130 @@ fun OfflineTileMap(
     }
 }
 
+/** 지도 왼쪽 하단 거리 척도 — 눈금 위치 고정, 라벨만 눈금 바로 위(겹침 없음) */
+@Composable
+private fun MapScaleRuler(
+    label: String,
+    barWidth: Dp,
+    modifier: Modifier = Modifier,
+) {
+    val rulerH = 7.dp
+    val labelStyle = TextStyle(
+        fontSize = 10.sp,
+        lineHeight = 10.sp,
+        fontWeight = FontWeight.SemiBold,
+        platformStyle = PlatformTextStyle(includeFontPadding = false),
+    )
+    Box(modifier = modifier.width(barWidth)) {
+        Canvas(
+            Modifier
+                .align(Alignment.BottomStart)
+                .width(barWidth)
+                .height(rulerH),
+        ) {
+            val w = size.width
+            val h = size.height
+            val c = Color(0xFF1E293B)
+            val mainSw = 1.5f
+            val endTickH = h * 0.85f
+            drawLine(c, Offset(0f, h), Offset(w, h), strokeWidth = mainSw, cap = StrokeCap.Butt)
+            drawLine(c, Offset(0f, h - endTickH), Offset(0f, h), strokeWidth = mainSw, cap = StrokeCap.Butt)
+            drawLine(c, Offset(w, h - endTickH), Offset(w, h), strokeWidth = mainSw, cap = StrokeCap.Butt)
+            listOf(0.25f, 0.5f, 0.75f).forEach { frac ->
+                val tickH = if (frac == 0.5f) h * 0.72f else h * 0.42f
+                drawLine(
+                    c,
+                    Offset(w * frac, h - tickH),
+                    Offset(w * frac, h),
+                    strokeWidth = if (frac == 0.5f) mainSw else 1f,
+                    cap = StrokeCap.Butt,
+                )
+            }
+        }
+        Text(
+            text = label,
+            style = labelStyle,
+            color = Color(0xFF1E293B),
+            modifier = Modifier
+                .align(Alignment.BottomStart)
+                .padding(bottom = rulerH + 1.dp),
+        )
+    }
+}
+
 private const val MAX_TILES_NORTH = 14
 /** 헤딩 회전용 정사각형 오버스캔 캔버스 한 변 상한(px) */
 private const val HEADING_CANVAS_MAX = 2720
 private const val MAX_POI_LABELS_ON_MAP = 32
+/** POI 화면 밖 여유(px) — 과도한 클리핑 방지 */
+private const val POI_SCREEN_MARGIN_PX = 120f
 /** pinch 노이즈 무시 — log(zoom) 이 값 미만이면 확대/축소로 보지 않음 */
 private const val MAP_ZOOM_LOG_THRESHOLD = 0.028
+
+/** POI 점·별점 — 맵 타일·GPS 핀 위 최상위 화면 레이어 */
+@Composable
+private fun PoiOverlayLayer(
+    vfW: Float,
+    vfH: Float,
+    canvasW: Float,
+    canvasH: Float,
+    smoothBearingDeg: Float,
+    pois: List<Poi>,
+    highlightedPoiId: String?,
+    camera: MapCamera,
+    user: UserPosition?,
+    headingUp: Boolean,
+    gpsLocked: Boolean,
+    activeZoomPool: () -> Set<Int>,
+    modifier: Modifier = Modifier,
+) {
+    if (vfW <= 0f || vfH <= 0f) return
+    Canvas(
+        modifier.graphicsLayer { clip = false },
+    ) {
+        if (pois.isEmpty()) return@Canvas
+        val w = vfW
+        val h = vfH
+        val pool = activeZoomPool()
+        val anchorLat = when {
+            user != null && (headingUp || gpsLocked) -> user.lat
+            else -> camera.centerLat
+        }
+        val z = MapCameraMath.pickRenderZoom(anchorLat, w, camera.visibleSpanM, pool)
+        val renderCam = buildRenderCamera(camera, user, headingUp, gpsLocked, z)
+        val locked = gpsLocked && user != null
+        val rot = if (headingUp) MapHeading.mapRotationDeg(smoothBearingDeg) else 0f
+        val cx = w / 2f
+        val cy = h / 2f
+        val showLabels = pois.size <= MAX_POI_LABELS_ON_MAP
+        val nc = drawContext.canvas.nativeCanvas
+        pois.forEach { p ->
+            val (nx, ny) = poiViewportScreenPoint(
+                p.lat, p.lon, renderCam, w, h, canvasW, canvasH, locked, user,
+            )
+            val (sx, sy) = viewportToScreen(nx, ny, rot, cx, cy)
+            if (sx < -POI_SCREEN_MARGIN_PX || sy < -POI_SCREEN_MARGIN_PX ||
+                sx > w + POI_SCREEN_MARGIN_PX || sy > h + POI_SCREEN_MARGIN_PX
+            ) {
+                return@forEach
+            }
+            val color = PoiColors.accent(p)
+            val selected = p.id == highlightedPoiId
+            val dotR = if (selected) 14f else 8f
+            if (selected) {
+                drawCircle(Color(0x99F59E0B), radius = 28f, center = Offset(sx, sy))
+                drawCircle(Color(0xFFF59E0B), radius = 21f, center = Offset(sx, sy))
+            }
+            drawCircle(Color(0x66000000), radius = dotR + 2.5f, center = Offset(sx, sy))
+            drawCircle(color, radius = dotR, center = Offset(sx, sy))
+            drawCircle(Color.White, radius = if (selected) 5f else 3f, center = Offset(sx, sy))
+            if (showLabels && !selected) {
+                val rating = PoiLogic.formatRating(PoiLogic.displayRating(p))
+                nc.drawText("★$rating", sx - 10f, sy + 16f, poiLabelPaint)
+            }
+        }
+    }
+}
 
 /** 회전된 헤딩업에서 손가락 드래그 방향 = 지도 이동 방향 */
 private fun screenDragToMapPan(dx: Float, dy: Float, mapRotationDeg: Float): Pair<Float, Float> =
@@ -691,8 +814,51 @@ private fun androidx.compose.ui.graphics.drawscope.DrawScope.drawForwardChevron(
     )
 }
 
-/** 뷰포트 좌표 — 헤딩업 시 지도 회전각만큼 화면 좌표로 변환 (오버레이 POI·경로) */
-private fun viewportMapPoint(
+/** 북쪽 위 뷰포트 좌표 → 화면 좌표 (헤딩업 회전 보정) */
+private fun viewportToScreen(
+    nx: Float,
+    ny: Float,
+    rotDeg: Float,
+    cx: Float,
+    cy: Float,
+): Pair<Float, Float> {
+    if (kotlin.math.abs(rotDeg) < 0.5f) return nx to ny
+    val rad = Math.toRadians(rotDeg.toDouble())
+    val dx = nx - cx
+    val dy = ny - cy
+    val c = cos(rad).toFloat()
+    val s = sin(rad).toFloat()
+    return (cx + dx * c - dy * s) to (cy + dx * s + dy * c)
+}
+
+/** POI·터치 — 타일 오버스캔 캔버스와 동일 좌표 → 뷰포트 화면 */
+private fun poiViewportScreenPoint(
+    lat: Double,
+    lon: Double,
+    renderCam: MapCamera,
+    vfW: Float,
+    vfH: Float,
+    canvasW: Float,
+    canvasH: Float,
+    gpsLocked: Boolean,
+    user: UserPosition?,
+): Pair<Float, Float> {
+    val (ox, oy) = if (gpsLocked && user != null) {
+        MapCameraMath.screenFromLatLonGpsLockedOverscan(
+            lat, lon, renderCam, vfW, vfH, canvasW, canvasH, user.lat, user.lon,
+        )
+    } else {
+        MapCameraMath.screenFromLatLonOverscan(
+            lat, lon, renderCam, vfW, vfH, canvasW, canvasH,
+        )
+    }
+    val placeX = (vfW - canvasW) / 2f
+    val placeY = (vfH - canvasH) / 2f
+    return (placeX + ox) to (placeY + oy)
+}
+
+/** 북쪽 위 뷰포트 좌표 — 터치 히트테스트 (회전은 터치 쪽에서 역변환) */
+private fun northUpViewportPoint(
     lat: Double,
     lon: Double,
     camera: MapCamera,
@@ -700,27 +866,33 @@ private fun viewportMapPoint(
     viewportH: Float,
     gpsLocked: Boolean,
     user: UserPosition?,
-    headingUp: Boolean,
-    mapRotationDeg: Float,
-): Pair<Float, Float> {
-    val (nx, ny) = if (gpsLocked && user != null) {
-        MapCameraMath.screenFromLatLonGpsLocked(
-            lat, lon, camera, viewportW, viewportH, user.lat, user.lon,
-        )
-    } else {
-        MapCameraMath.screenFromLatLon(lat, lon, camera, viewportW, viewportH)
-    }
-    if (headingUp && abs(mapRotationDeg) > 0.5f) {
-        return MapCameraMath.mapPointToScreen(
-            nx, ny, viewportW / 2f, viewportH / 2f, mapRotationDeg,
-        )
-    }
-    return nx to ny
+): Pair<Float, Float> = if (gpsLocked && user != null) {
+    MapCameraMath.screenFromLatLonGpsLocked(
+        lat, lon, camera, viewportW, viewportH, user.lat, user.lon,
+    )
+} else {
+    MapCameraMath.screenFromLatLon(lat, lon, camera, viewportW, viewportH)
 }
 
-private fun expandTileRange(range: IntRange, pad: Int): IntRange {
-    if (pad <= 0 || range.isEmpty()) return range
-    return (range.first - pad).coerceAtLeast(0)..(range.last + pad)
+/** 타일·POI 공통 — overscan 캔버스 북쪽 위 좌표 (회전 레이어 안) */
+private fun mapContentPoint(
+    lat: Double,
+    lon: Double,
+    camera: MapCamera,
+    viewportW: Float,
+    viewportH: Float,
+    canvasW: Float,
+    canvasH: Float,
+    gpsLocked: Boolean,
+    user: UserPosition?,
+): Pair<Float, Float> = if (gpsLocked && user != null) {
+    MapCameraMath.screenFromLatLonGpsLockedOverscan(
+        lat, lon, camera, viewportW, viewportH, canvasW, canvasH, user.lat, user.lon,
+    )
+} else {
+    MapCameraMath.screenFromLatLonOverscan(
+        lat, lon, camera, viewportW, viewportH, canvasW, canvasH,
+    )
 }
 
 private fun buildRenderCamera(

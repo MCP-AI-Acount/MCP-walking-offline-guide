@@ -11,6 +11,7 @@ import kotlinx.serialization.json.Json
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import org.json.JSONObject
+import com.mcpauto.walkingofflineguide.data.SafeStorage
 import java.io.File
 import java.net.URLEncoder
 import java.util.concurrent.TimeUnit
@@ -33,6 +34,8 @@ class TranslationClient(context: Context) {
                 val file = json.decodeFromString<CacheFile>(cacheFile.readText())
                 memory.putAll(file.entries)
             }
+        }.onFailure {
+            SafeStorage.quarantineCorrupt(cacheFile)
         }
     }
 
@@ -92,7 +95,7 @@ class TranslationClient(context: Context) {
             }
             memory.clear()
             memory.putAll(trimmedMap)
-            cacheFile.writeText(json.encodeToString(CacheFile(trimmedMap)))
+            SafeStorage.atomicWriteText(cacheFile, json.encodeToString(CacheFile(trimmedMap)))
         }
     }
 

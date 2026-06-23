@@ -1,5 +1,28 @@
 # Changelog
 
+## 1.2.28 (2026-06-23)
+
+- POI: `name:ko` 파싱 · 모국/프리뷰 소스 분리 · Overpass 재시도·홈 캐시 즉시 저장
+- 허브: 도시/지도 탭 → 해당 지역 프리뷰 (GPS·토글 OFF)
+- 스케일: 눈금 위치 고정 · 100m 라벨만 눈금 바로 위
+- `TripNavigation.isHomeMapRegion` · `hubPreviewMode` · SafeStorage/CrashRecovery 등 누적
+
+## 1.1.7 (2026-06-23)
+
+- 크래시 복구: `CrashRecovery` · 로딩 **메인·옵션·복구** · 옵션 오류 복구 카드
+- 메뉴 UI 단순화 (`MenuUi.kt`)
+- Project Maker 문서: `BUG_LIST.md` WOG-001~003
+
+## 1.1.6 (2026-06-23)
+
+- `SafeStorage` — 원자적 쓰기·JSON/quarantine 전역
+- `TileStore` — zip 실패 fallback · `.tmp` 감지
+
+## 1.1.5 (2026-06-23)
+
+- 깨진 `tiles.zip` 격리 + `tiles/` 폴더 fallback
+- zip tmp→rename (다운로드 중 corruption 방지)
+
 ## 1.1.0 (2026-06-22)
 
 GPS 헤딩 지도 1차 완성 — 도보 오프라인 가이드 핵심 UX.

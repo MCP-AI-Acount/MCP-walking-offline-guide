@@ -45,23 +45,14 @@ class RoutingGraphBuilder {
             way["highway"~"$highway"](${bbox.south},${bbox.west},${bbox.north},${bbox.east});
             out geom;
         """.trimIndent()
-        val body = FormBody.Builder().add("data", q).build()
-        val req = Request.Builder()
-            .url("https://overpass-api.de/api/interpreter")
-            .post(body)
-            .header("User-Agent", "WalkingOfflineGuide/1.0 (foot routing)")
-            .build()
-        return client.newCall(req).execute().use { resp ->
-            if (!resp.isSuccessful) emptyList()
-            else {
-                val arr = JSONObject(resp.body?.string().orEmpty()).optJSONArray("elements")
-                    ?: return@use emptyList()
-                (0 until arr.length()).mapNotNull { i ->
-                    val el = arr.getJSONObject(i)
-                    if (el.optString("type") == "way") el else null
-                }
+        return runCatching {
+            val arr = OverpassHttp.postQuery(q, "WalkingOfflineGuide/1.2 (foot routing)")
+                .optJSONArray("elements") ?: return@runCatching emptyList()
+            (0 until arr.length()).mapNotNull { i ->
+                val el = arr.getJSONObject(i)
+                if (el.optString("type") == "way") el else null
             }
-        }
+        }.getOrDefault(emptyList())
     }
 
     private fun buildGraph(ways: List<JSONObject>): RoutingGraphFile {

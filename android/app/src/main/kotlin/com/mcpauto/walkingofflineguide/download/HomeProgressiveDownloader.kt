@@ -4,6 +4,7 @@ import android.content.Context
 import com.mcpauto.walkingofflineguide.data.Bbox
 import com.mcpauto.walkingofflineguide.data.PoiBundle
 import com.mcpauto.walkingofflineguide.data.RegionRecord
+import com.mcpauto.walkingofflineguide.data.SafeStorage
 import com.mcpauto.walkingofflineguide.data.TripStore
 import com.mcpauto.walkingofflineguide.logic.MapMath
 import com.mcpauto.walkingofflineguide.logic.PoiLogic
@@ -21,10 +22,7 @@ import kotlinx.serialization.json.Json
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import java.io.File
-import java.io.FileOutputStream
 import java.util.concurrent.TimeUnit
-import java.util.zip.ZipEntry
-import java.util.zip.ZipOutputStream
 import kotlin.coroutines.coroutineContext
 
 /**
@@ -126,12 +124,12 @@ class HomeProgressiveDownloader(
             bytes += png.size
             if (doneKeys.size % 8 == 0) {
                 saveTileProgress(progressFile, doneKeys)
-                zipTilesFolder(tilesRoot, File(regionDir, "tiles.zip"))
+                SafeStorage.zipTilesFolder(tilesRoot, File(regionDir, "tiles.zip"))
             }
             Thread.sleep(100)
         }
         saveTileProgress(progressFile, doneKeys)
-        zipTilesFolder(tilesRoot, File(regionDir, "tiles.zip"))
+        SafeStorage.zipTilesFolder(tilesRoot, File(regionDir, "tiles.zip"))
         store.loadRegions().find { it.id == REGION_ID }?.let { rec ->
             store.saveRegion(rec.copy(downloadBytes = bytes, downloadComplete = doneKeys.isNotEmpty()))
         }
@@ -142,7 +140,7 @@ class HomeProgressiveDownloader(
         val tilesRoot = File(regionDir, "tiles")
         val zip = File(regionDir, "tiles.zip")
         if (tilesRoot.isDirectory && tilesRoot.walkTopDown().any { it.isFile && it.extension == "png" }) {
-            zipTilesFolder(tilesRoot, zip)
+            SafeStorage.zipTilesFolder(tilesRoot, zip)
         }
     }
 
@@ -155,7 +153,7 @@ class HomeProgressiveDownloader(
             val bb = PoiLogic.bboxAround(lat, lon, HOME_RADIUS_KM)
             val body = routingBuilder.buildAndSerialize(bb)
             if (body.length < 48) return@runCatching false
-            graphFile.writeText(body)
+            SafeStorage.atomicWriteText(graphFile, body)
             com.mcpauto.walkingofflineguide.data.RoutingGraph.invalidate(REGION_ID)
             true
         }.getOrDefault(false)
@@ -194,7 +192,7 @@ class HomeProgressiveDownloader(
             count = pois.size,
             pois = pois,
         )
-        File(dir, "poi.json").writeText(json.encodeToString(bundle))
+        SafeStorage.atomicWriteText(File(dir, "poi.json"), json.encodeToString(bundle))
     }
 
     private fun regionDir(): File = File(context.filesDir, "walking_data/regions/$REGION_ID")
@@ -205,23 +203,14 @@ class HomeProgressiveDownloader(
         if (!file.exists()) return mutableSetOf()
         return runCatching {
             json.decodeFromString<List<String>>(file.readText()).toMutableSet()
-        }.getOrElse { mutableSetOf() }
+        }.getOrElse {
+            SafeStorage.quarantineCorrupt(file)
+            mutableSetOf()
+        }
     }
 
     private fun saveTileProgress(file: File, keys: Set<String>) {
-        file.writeText(json.encodeToString(keys.toList()))
-    }
-
-    private fun zipTilesFolder(tilesRoot: File, outZip: File) {
-        if (!tilesRoot.exists()) return
-        ZipOutputStream(FileOutputStream(outZip)).use { zip ->
-            tilesRoot.walkTopDown().filter { it.isFile && it.extension == "png" }.forEach { f ->
-                val rel = f.relativeTo(tilesRoot).path.replace('\\', '/')
-                zip.putNextEntry(ZipEntry("tiles/$rel"))
-                zip.write(f.readBytes())
-                zip.closeEntry()
-            }
-        }
+        SafeStorage.atomicWriteText(file, json.encodeToString(keys.toList()))
     }
 
     companion object {
@@ -253,12 +242,14 @@ class HomeProgressiveDownloader(
                 onRoutingGraphReady()
             }
             val graphFile = File(context.filesDir, "walking_data/regions/$REGION_ID/routing_graph.json")
+            val poiFile = File(context.filesDir, "walking_data/regions/$REGION_ID/poi.json")
             val graphMissing = !graphFile.exists() || graphFile.length() <= 32
+            val poiSparse = !poiFile.exists() || poiFile.length() < 48
             sessionMutex.withLock {
                 if (running) return
                 val prevLat = lastLat
                 val prevLon = lastLon
-                if (!graphMissing && prevLat != null && prevLon != null) {
+                if (!graphMissing && !poiSparse && prevLat != null && prevLon != null) {
                     val moved = PoiLogic.haversineM(prevLat, prevLon, lat, lon)
                     if (moved < RETRIGGER_MOVE_M) return
                 }

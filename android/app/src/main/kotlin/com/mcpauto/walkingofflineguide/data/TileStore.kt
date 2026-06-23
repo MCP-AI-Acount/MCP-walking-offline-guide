@@ -37,14 +37,25 @@ class TileStore(private val context: Context) {
         val zip = File(regionDir, "tiles.zip")
         val dir = File(regionDir, "tiles")
         withContext(Dispatchers.IO) {
+            SafeStorage.cleanupStaleTmp(regionDir, "tiles.zip")
+            val hasFolderTiles = dir.isDirectory && runCatching {
+                dir.walkTopDown().any { it.isFile && it.extension.equals("png", ignoreCase = true) }
+            }.getOrDefault(false)
+            val zipReadable = zip.exists() && !SafeStorage.isWriteInProgress(zip)
             when {
-                zip.exists() -> indexZip(zip)
-                dir.isDirectory -> indexFolder(dir)
-                else -> {
-                    loadedRegionId = null
-                    zipFile = null
-                    tilesDir = null
+                zipReadable -> {
+                    val indexed = runCatching { indexZip(zip) }.isSuccess
+                    if (!indexed) {
+                        SafeStorage.quarantineCorrupt(zip)
+                        if (hasFolderTiles) {
+                            indexFolder(dir)
+                        } else {
+                            clearLoadedRegion()
+                        }
+                    }
                 }
+                hasFolderTiles -> indexFolder(dir)
+                else -> clearLoadedRegion()
             }
         }
         indexedKeys.size
@@ -56,15 +67,19 @@ class TileStore(private val context: Context) {
         memory.get(key)?.let { return it }
         val opts = BitmapFactory.Options().apply { inPreferredConfig = Bitmap.Config.RGB_565 }
         val bmp = when {
-            tilesDir != null -> {
-                val file = File(tilesDir, "$key.png")
-                if (!file.exists()) return null
-                BitmapFactory.decodeFile(file.absolutePath, opts)
-            }
+            tilesDir != null -> decodeFromFolder(tilesDir!!, key, opts)
             zipFile != null -> decodeFromZip(zipFile!!, key, opts)
             else -> null
         }
         return bmp?.also { memory.put(key, it) }
+    }
+
+    private fun decodeFromFolder(dir: File, key: String, opts: BitmapFactory.Options): Bitmap? {
+        val file = File(dir, "$key.png")
+        if (!file.exists() || file.length() < 64L) return null
+        return runCatching {
+            BitmapFactory.decodeFile(file.absolutePath, opts)
+        }.getOrNull()
     }
 
     private fun decodeFromZip(zip: File, key: String, opts: BitmapFactory.Options): Bitmap? {
@@ -75,14 +90,21 @@ class TileStore(private val context: Context) {
                 while (entry != null) {
                     if (entry.name == entryPath) {
                         val bytes = zis.readBytes()
+                        if (bytes.size < 64) return@use null
                         return BitmapFactory.decodeByteArray(bytes, 0, bytes.size, opts)
                     }
-                    zis.closeEntry()
+                    runCatching { zis.closeEntry() }
                     entry = zis.nextEntry
                 }
             }
             null
         }.getOrNull()
+    }
+
+    private fun clearLoadedRegion() {
+        loadedRegionId = null
+        zipFile = null
+        tilesDir = null
     }
 
     private fun indexZip(file: File) {
@@ -91,7 +113,7 @@ class TileStore(private val context: Context) {
         ZipInputStream(file.inputStream()).use { zis ->
             var entry = zis.nextEntry
             while (entry != null) {
-                if (!entry.isDirectory && entry.name.endsWith(".png")) {
+                if (!entry.isDirectory && entry.name.endsWith(".png", ignoreCase = true)) {
                     val tileKey = entry.name.removePrefix("tiles/").removeSuffix(".png")
                     registerKey(tileKey)
                 }
@@ -104,12 +126,15 @@ class TileStore(private val context: Context) {
     private fun indexFolder(dir: File) {
         tilesDir = dir
         zipFile = null
-        dir.walkTopDown()
-            .filter { it.isFile && it.extension.equals("png", true) }
-            .forEach { file ->
-                val tileKey = file.relativeTo(dir).path.replace('\\', '/').removeSuffix(".png")
-                if (tileKey.count { it == '/' } == 2) registerKey(tileKey)
-            }
+        runCatching {
+            dir.walkTopDown()
+                .filter { it.isFile && it.extension.equals("png", ignoreCase = true) }
+                .forEach { file ->
+                    if (file.length() < 64L) return@forEach
+                    val tileKey = file.relativeTo(dir).path.replace('\\', '/').removeSuffix(".png")
+                    if (tileKey.count { it == '/' } == 2) registerKey(tileKey)
+                }
+        }
     }
 
     private fun registerKey(key: String) {

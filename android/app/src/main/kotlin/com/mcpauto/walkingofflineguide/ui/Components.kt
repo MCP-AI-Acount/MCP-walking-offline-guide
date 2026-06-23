@@ -49,6 +49,7 @@ fun StarRating(rating: Float, modifier: Modifier = Modifier) {
 fun PoiListItem(
     poi: Poi,
     displayName: String,
+    readingName: String? = null,
     description: String?,
     accent: Color,
     typeLabel: String,
@@ -84,6 +85,15 @@ fun PoiListItem(
                     maxLines = 2,
                     overflow = TextOverflow.Ellipsis,
                 )
+                if (!readingName.isNullOrBlank()) {
+                    Text(
+                        readingName,
+                        style = MaterialTheme.typography.labelSmall,
+                        color = Color(0xFF64748B),
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
                 if (!description.isNullOrBlank()) {
                     Text(
                         description,

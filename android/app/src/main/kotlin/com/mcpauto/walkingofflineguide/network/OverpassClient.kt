@@ -4,18 +4,9 @@ import com.mcpauto.walkingofflineguide.data.Bbox
 import com.mcpauto.walkingofflineguide.data.Poi
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
-import okhttp3.FormBody
-import okhttp3.OkHttpClient
-import okhttp3.Request
 import org.json.JSONObject
-import java.util.concurrent.TimeUnit
 
 class OverpassClient {
-    private val client = OkHttpClient.Builder()
-        .connectTimeout(20, TimeUnit.SECONDS)
-        .readTimeout(60, TimeUnit.SECONDS)
-        .build()
-
     suspend fun fetchPois(bbox: Bbox, homeLangTag: String = "ko"): List<Poi> = withContext(Dispatchers.IO) {
         val q = """
             [out:json][timeout:45];
@@ -31,16 +22,9 @@ class OverpassClient {
             );
             out center;
         """.trimIndent()
-        val body = FormBody.Builder().add("data", q).build()
-        val req = Request.Builder()
-            .url("https://overpass-api.de/api/interpreter")
-            .post(body)
-            .header("User-Agent", "WalkingOfflineGuide/1.0 (Android)")
-            .build()
-        client.newCall(req).execute().use { resp ->
-            if (!resp.isSuccessful) return@withContext emptyList()
-            parseElements(JSONObject(resp.body?.string().orEmpty()), homeLangTag)
-        }
+        runCatching {
+            parseElements(OverpassHttp.postQuery(q), homeLangTag)
+        }.getOrElse { throw it }
     }
 
     private fun parseElements(json: JSONObject, homeLangTag: String): List<Poi> {
@@ -59,11 +43,7 @@ class OverpassClient {
             }
             if (lat.isNaN() || lon.isNaN()) continue
             val (kind, tourism) = classify(tags)
-            val localName = listOf(
-                tags.optString("name"),
-                tags.optString("brand"),
-                tags.optString("name:en"),
-            ).firstOrNull { it.isNotBlank() } ?: continue
+            val localName = resolveLocalName(tags, homeLangTag) ?: continue
             val homeTag = "name:$homeLangTag"
             val altHomeTag = when (homeLangTag) {
                 "zh-TW" -> "name:zh-Hant"
@@ -73,6 +53,7 @@ class OverpassClient {
             val nameHome = listOf(
                 tags.optString(homeTag),
                 tags.optString(altHomeTag),
+                if (homeLangTag == "ko") tags.optString("name:ko") else "",
             ).firstOrNull { it.isNotBlank() }
             val descLocal = tags.optString("description").ifBlank { null }
                 ?: tags.optString("description:$homeLangTag").ifBlank { null }
@@ -95,6 +76,19 @@ class OverpassClient {
             )
         }
         return out.distinctBy { it.id }
+    }
+
+    /** 한국 등 name:ko만 있는 OSM 노드도 수집 */
+    private fun resolveLocalName(tags: JSONObject, homeLangTag: String): String? {
+        val langTag = "name:$homeLangTag"
+        return listOf(
+            tags.optString("name"),
+            tags.optString(langTag),
+            tags.optString("name:ko"),
+            tags.optString("name:en"),
+            tags.optString("brand"),
+            tags.optString("official_name"),
+        ).firstOrNull { it.isNotBlank() }
     }
 
     private fun classify(tags: JSONObject): Pair<String, String?> {

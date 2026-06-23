@@ -5,34 +5,33 @@ import android.view.Surface
 import kotlin.math.abs
 
 /**
- * 가로(sensorLandscape) 헤딩 — AOSP remap + getOrientation.
- * 지도 회전 = **중력(하늘) 축 yaw만** — pitch/roll은 무시.
- * 전방=화면 위: azimuth −90° (ROTATION_270은 +90°).
+ * 세로(portrait) 2D 헤딩 — 수평면 azimuth만 사용.
+ * 지도는 Z축 회전만(기울임 없음). 폰이 거의 세로일 때만 마지막 bearing 유지.
  */
 object MapHeading {
-    /** pitch/roll 과다 시 yaw 고정(마지막 값 유지) — 지도 기울임 금지 */
-    private const val EXTREME_TILT_DEG = 78f
+    /** 폰 수직(엘리베이터·지하 등) — azimuth 신뢰↓ → 마지막 값 유지 */
+    private const val VERTICAL_HOLD_PITCH_DEG = 62f
 
     private val orientation = FloatArray(3)
 
-    fun remapLandscape(inR: FloatArray, outR: FloatArray): Boolean =
-        when (LandscapeOrientation.displayRotation) {
-            Surface.ROTATION_270 -> SensorManager.remapCoordinateSystem(
-                inR, SensorManager.AXIS_MINUS_Y, SensorManager.AXIS_X, outR,
+    fun remapPortrait(inR: FloatArray, outR: FloatArray): Boolean =
+        when (PortraitOrientation.displayRotation) {
+            Surface.ROTATION_180 -> SensorManager.remapCoordinateSystem(
+                inR, SensorManager.AXIS_MINUS_X, SensorManager.AXIS_MINUS_Y, outR,
             )
             else -> SensorManager.remapCoordinateSystem(
-                inR, SensorManager.AXIS_Y, SensorManager.AXIS_MINUS_X, outR,
+                inR, SensorManager.AXIS_X, SensorManager.AXIS_Y, outR,
             )
         }
 
     /**
      * @param lastBearingDeg 기울기 과다·센서 공백 시 유지할 마지막 yaw(0~360)
      */
-    fun landscapeForwardBearingDeg(rotationMatrix: FloatArray, lastBearingDeg: Float? = null): Float? {
+    fun portraitForwardBearingDeg(rotationMatrix: FloatArray, lastBearingDeg: Float? = null): Float? {
         val yaw = gravityAxisYawDeg(rotationMatrix) ?: return lastBearingDeg
-        val offset = when (LandscapeOrientation.displayRotation) {
-            Surface.ROTATION_270 -> 90f
-            else -> -90f
+        val offset = when (PortraitOrientation.displayRotation) {
+            Surface.ROTATION_180 -> 180f
+            else -> 0f
         }
         return normalizeDeg(yaw + offset)
     }
@@ -45,13 +44,12 @@ object MapHeading {
      */
     private fun gravityAxisYawDeg(rotationMatrix: FloatArray): Float? {
         val remapped = FloatArray(9)
-        if (!remapLandscape(rotationMatrix, remapped)) {
+        if (!remapPortrait(rotationMatrix, remapped)) {
             System.arraycopy(rotationMatrix, 0, remapped, 0, 9)
         }
         SensorManager.getOrientation(remapped, orientation)
         val pitchDeg = Math.toDegrees(orientation[1].toDouble()).toFloat()
-        val rollDeg = Math.toDegrees(orientation[2].toDouble()).toFloat()
-        if (abs(pitchDeg) > EXTREME_TILT_DEG && abs(rollDeg) > EXTREME_TILT_DEG) {
+        if (abs(pitchDeg) > VERTICAL_HOLD_PITCH_DEG) {
             return null
         }
         var azimuth = Math.toDegrees(orientation[0].toDouble()).toFloat()

@@ -6,6 +6,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.statusBarsPadding
@@ -41,9 +42,8 @@ fun RadarRadiusBadge(
     val active = radarRadiusM > 0
     Box(
         modifier = modifier
-            .size(44.dp)
             .border(
-                width = 2.5.dp,
+                width = 1.5.dp,
                 color = if (active) Color(0xFF15803D) else Color(0xFF94A3B8),
                 shape = CircleShape,
             )
@@ -54,12 +54,56 @@ fun RadarRadiusBadge(
         Text(
             text = label,
             style = MaterialTheme.typography.labelSmall,
-            fontSize = if (label.length > 4) 9.sp else 11.sp,
+            fontSize = when {
+                label == "OFF" -> 8.sp
+                label.length > 4 -> 7.sp
+                else -> 9.sp
+            },
             fontWeight = FontWeight.Bold,
             color = if (active) Color(0xFF15803D) else Color(0xFF64748B),
             textAlign = TextAlign.Center,
             maxLines = 1,
         )
+    }
+}
+
+private val MapChromeBtn = 36.dp
+private val MapChromeIcon = 22.dp
+private val MapRadarBadge = 38.dp
+
+/** 지도 우상단 — 반경(왼쪽) + GPS(오른쪽), 크기 통일 */
+@Composable
+fun MapGpsRadiusChromeRow(
+    radarRadiusM: Int,
+    onCycleRadar: () -> Unit,
+    gpsLocked: Boolean,
+    gpsInteractive: Boolean = true,
+    onToggleGpsLock: (() -> Unit)? = null,
+    lockContentDescription: String = if (gpsLocked) "위치 고정" else "위치",
+    modifier: Modifier = Modifier,
+) {
+    Row(modifier, verticalAlignment = Alignment.CenterVertically) {
+        RadarRadiusBadge(
+            radarRadiusM = radarRadiusM,
+            onCycle = onCycleRadar,
+            modifier = Modifier.size(MapRadarBadge),
+        )
+        IconButton(
+            onClick = { onToggleGpsLock?.invoke() },
+            enabled = gpsInteractive && onToggleGpsLock != null,
+            modifier = Modifier.size(MapChromeBtn),
+        ) {
+            Icon(
+                Icons.Default.MyLocation,
+                contentDescription = lockContentDescription,
+                tint = when {
+                    !gpsInteractive -> Color(0xFF64748B)
+                    gpsLocked -> Color(0xFF15803D)
+                    else -> Color(0xFF64748B)
+                },
+                modifier = Modifier.size(MapChromeIcon),
+            )
+        }
     }
 }
 

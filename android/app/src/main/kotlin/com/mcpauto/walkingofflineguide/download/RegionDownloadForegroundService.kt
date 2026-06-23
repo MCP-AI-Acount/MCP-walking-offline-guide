@@ -51,18 +51,26 @@ class RegionDownloadForegroundService : Service() {
             }
             ACTION_START -> {
                 val jobJson = intent.getStringExtra(EXTRA_JOB).orEmpty()
-                if (jobJson.isBlank()) {
-                    stopForegroundAndSelf()
-                    return START_NOT_STICKY
-                }
                 if (DownloadSession.running.value) return START_STICKY
-                val job = runCatching { json.decodeFromString<DownloadJobState>(jobJson) }.getOrNull()
-                if (job == null || job.stops.isEmpty()) {
-                    DownloadSession.publishEvent(DownloadEvent.Failed("다운로드 일정이 없습니다."))
-                    stopForegroundAndSelf()
-                    return START_NOT_STICKY
+                if (jobJson.isNotBlank()) {
+                    val job = runCatching { json.decodeFromString<DownloadJobState>(jobJson) }.getOrNull()
+                    if (job == null || job.stops.isEmpty()) {
+                        DownloadSession.publishEvent(DownloadEvent.Failed("다운로드 일정이 없습니다."))
+                        stopForegroundAndSelf()
+                        return START_NOT_STICKY
+                    }
+                    startDownload(job)
+                    return START_STICKY
                 }
-                startDownload(job)
+                // 시스템이 서비스만 재시작한 경우 — 저장된 job으로 이어받기
+                serviceScope.launch(Dispatchers.IO) {
+                    val job = store.loadDownloadJob()
+                    if (job == null || !job.active || job.stops.isEmpty()) {
+                        stopForegroundAndSelf()
+                        return@launch
+                    }
+                    startDownload(job)
+                }
                 return START_STICKY
             }
             else -> return START_NOT_STICKY
