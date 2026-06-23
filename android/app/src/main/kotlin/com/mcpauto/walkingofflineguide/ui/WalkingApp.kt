@@ -22,10 +22,12 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.AlertDialog
@@ -294,7 +296,7 @@ fun WalkingApp() {
     }
 
     if (showOptions) {
-        OptionsDialog(
+        OptionsScreen(
             config = config,
             onDismiss = { showOptions = false },
             onConfirm = { updated ->
@@ -511,7 +513,8 @@ private fun HubScreen(
             Row(
                 Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = 4.dp, vertical = 2.dp),
+                    .statusBarsPadding()
+                    .padding(horizontal = 4.dp, vertical = 1.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 IconButton(onClick = onOptions) {
@@ -682,7 +685,10 @@ private fun BasicSetupScreen(
     }
 
     Row(
-        Modifier.fillMaxSize().padding(16.dp),
+        Modifier
+            .fillMaxSize()
+            .statusBarsPadding()
+            .padding(horizontal = 12.dp, vertical = 8.dp),
         horizontalArrangement = Arrangement.spacedBy(16.dp),
     ) {
         Column(Modifier.weight(0.45f).fillMaxHeight().verticalScroll(rememberScrollState())) {
@@ -1157,8 +1163,9 @@ private fun TravelSetupScreen(
     }
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun OptionsDialog(
+private fun OptionsScreen(
     config: TripConfig,
     onDismiss: () -> Unit,
     onConfirm: (TripConfig) -> Unit,
@@ -1173,56 +1180,120 @@ private fun OptionsDialog(
     var autoDelete by remember { mutableStateOf(config.autoDeleteAfterTrip) }
     var manualDelete by remember { mutableStateOf(config.manualDeletePrompt) }
 
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text("옵션") },
-        text = {
-            Column {
+    Scaffold(
+        containerColor = Color(0xFFF4F6F8),
+        topBar = {
+            Row(
+                Modifier
+                    .fillMaxWidth()
+                    .statusBarsPadding()
+                    .padding(horizontal = 2.dp, vertical = 1.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                IconButton(onClick = onDismiss) {
+                    Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "닫기")
+                }
+                Text(
+                    "옵션",
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold,
+                    modifier = Modifier.weight(1f),
+                )
+                TextButton(
+                    onClick = {
+                        onConfirm(
+                            config.copy(
+                                showHotel = showHotel,
+                                showRestaurant = showRestaurant,
+                                showSight = showSight,
+                                autoDeleteAfterTrip = autoDelete,
+                                manualDeletePrompt = manualDelete,
+                            ),
+                        )
+                    },
+                ) { Text("저장") }
+            }
+        },
+    ) { padding ->
+        Column(
+            Modifier
+                .padding(padding)
+                .fillMaxSize()
+                .verticalScroll(rememberScrollState())
+                .padding(horizontal = 16.dp, vertical = 8.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            Column(
+                Modifier
+                    .fillMaxWidth()
+                    .background(Color.White, RoundedCornerShape(12.dp))
+                    .padding(14.dp),
+            ) {
                 Text("표시 정보", fontWeight = FontWeight.Bold)
-                Text("끄면 지도·목록에서 해당 종류가 숨겨집니다.", style = MaterialTheme.typography.labelSmall, color = Color.Gray)
+                Text(
+                    "끄면 지도·목록에서 해당 종류가 숨겨집니다.",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = Color(0xFF64748B),
+                    modifier = Modifier.padding(bottom = 8.dp),
+                )
                 Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                     FilterChip(showHotel, { showHotel = !showHotel }, { Text("숙소") })
                     FilterChip(showRestaurant, { showRestaurant = !showRestaurant }, { Text("음식점") })
                     FilterChip(showSight, { showSight = !showSight }, { Text("명소") })
                 }
+            }
+            Column(
+                Modifier
+                    .fillMaxWidth()
+                    .background(Color.White, RoundedCornerShape(12.dp))
+                    .padding(14.dp),
+            ) {
+                Text("다운로드 지도", fontWeight = FontWeight.Bold)
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Checkbox(autoDelete, { autoDelete = it })
                     Text("여행 후 자동 삭제")
                 }
-                Text("종료일이 지나면 다운로드 지도를 자동으로 지웁니다.", style = MaterialTheme.typography.labelSmall, color = Color.Gray)
+                Text(
+                    "종료일이 지나면 다운로드 지도를 자동으로 지웁니다.",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = Color(0xFF64748B),
+                )
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Checkbox(manualDelete, { manualDelete = it })
                     Text("수동 삭제 안내")
                 }
-                TextButton(onClick = onResetBasic) { Text("기본 설정 초기화", color = Color(0xFFDC2626)) }
+            }
+            Column(
+                Modifier
+                    .fillMaxWidth()
+                    .background(Color.White, RoundedCornerShape(12.dp))
+                    .padding(horizontal = 8.dp, vertical = 4.dp),
+            ) {
+                TextButton(onClick = onResetBasic, modifier = Modifier.fillMaxWidth()) {
+                    Text("기본 설정 초기화", color = Color(0xFFDC2626))
+                }
                 Text(
                     "모국·표시 정보를 처음부터 다시 설정합니다.",
                     style = MaterialTheme.typography.labelSmall,
-                    color = Color.Gray,
+                    color = Color(0xFF64748B),
+                    modifier = Modifier.padding(horizontal = 12.dp, bottom = 4.dp),
                 )
-                TextButton(onClick = onDeleteAllMaps) { Text("지도 데이터 전부 삭제", color = Color.Red) }
+                TextButton(onClick = onDeleteAllMaps, modifier = Modifier.fillMaxWidth()) {
+                    Text("지도 데이터 전부 삭제", color = Color(0xFFDC2626))
+                }
                 Text(
-                    "저장된 타일·명소·도보경로를 모두 지웁니다. 다시 받으려면 스케줄을 짜 주세요.",
+                    "저장된 타일·명소·도보경로를 모두 지웁니다.",
                     style = MaterialTheme.typography.labelSmall,
-                    color = Color.Gray,
+                    color = Color(0xFF64748B),
+                    modifier = Modifier.padding(horizontal = 12.dp, bottom = 4.dp),
                 )
-                TextButton(onClick = onMain) { Text("메인으로") }
-                TextButton(onClick = onExit) { Text("나가기") }
+                TextButton(onClick = onMain, modifier = Modifier.fillMaxWidth()) {
+                    Text("메인으로")
+                }
+                TextButton(onClick = onExit, modifier = Modifier.fillMaxWidth()) {
+                    Text("나가기")
+                }
             }
-        },
-        confirmButton = {
-            TextButton(onClick = {
-                onConfirm(
-                    config.copy(
-                        showHotel = showHotel,
-                        showRestaurant = showRestaurant,
-                        showSight = showSight,
-                        autoDeleteAfterTrip = autoDelete,
-                        manualDeletePrompt = manualDelete,
-                    ),
-                )
-            }) { Text("확인") }
-        },
-        dismissButton = { TextButton(onClick = onDismiss) { Text("취소") } },
-    )
+        }
+    }
 }
