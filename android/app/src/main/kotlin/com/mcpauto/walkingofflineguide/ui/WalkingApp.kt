@@ -1276,7 +1276,7 @@ private fun OptionsScreen(
                     "모국·표시 정보를 처음부터 다시 설정합니다.",
                     style = MaterialTheme.typography.labelSmall,
                     color = Color(0xFF64748B),
-                    modifier = Modifier.padding(horizontal = 12.dp, bottom = 4.dp),
+                    modifier = Modifier.padding(horizontal = 12.dp).padding(bottom = 4.dp),
                 )
                 TextButton(onClick = onDeleteAllMaps, modifier = Modifier.fillMaxWidth()) {
                     Text("지도 데이터 전부 삭제", color = Color(0xFFDC2626))
@@ -1285,7 +1285,7 @@ private fun OptionsScreen(
                     "저장된 타일·명소·도보경로를 모두 지웁니다.",
                     style = MaterialTheme.typography.labelSmall,
                     color = Color(0xFF64748B),
-                    modifier = Modifier.padding(horizontal = 12.dp, bottom = 4.dp),
+                    modifier = Modifier.padding(horizontal = 12.dp).padding(bottom = 4.dp),
                 )
                 TextButton(onClick = onMain, modifier = Modifier.fillMaxWidth()) {
                     Text("메인으로")
