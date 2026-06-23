@@ -89,6 +89,7 @@ import com.mcpauto.walkingofflineguide.data.PoiBundle
 import com.mcpauto.walkingofflineguide.data.PoiRepository
 import com.mcpauto.walkingofflineguide.data.RegionRecord
 import com.mcpauto.walkingofflineguide.data.RoutingGraph
+import com.mcpauto.walkingofflineguide.data.STOP_DOWNLOAD_RADIUS_KM
 import com.mcpauto.walkingofflineguide.data.TileStore
 import com.mcpauto.walkingofflineguide.data.TripConfig
 import com.mcpauto.walkingofflineguide.data.UserPosition
@@ -107,6 +108,7 @@ import com.mcpauto.walkingofflineguide.logic.TripNavigation
 import com.mcpauto.walkingofflineguide.map.MapUiColors
 import com.mcpauto.walkingofflineguide.map.PoiColors
 import com.mcpauto.walkingofflineguide.download.HomeProgressiveDownloader
+import com.mcpauto.walkingofflineguide.download.OnDemandRouting
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
@@ -164,6 +166,62 @@ private fun persistHomeCachePois(
             pois = pois,
         ),
     )
+}
+
+private fun persistTravelRegionPois(
+    repo: PoiRepository,
+    regionId: String,
+    pois: List<Poi>,
+    lat: Double,
+    lon: Double,
+) {
+    if (pois.isEmpty() || regionId.isBlank() || regionId == MapPolicy.HOME_LIVE_ONLINE_ID) return
+    val bb = PoiLogic.bboxAround(lat, lon, MapMath.POI_VIEW_RADIUS_KM)
+    val existing = repo.loadRegionBundle(regionId)
+    val merged = (existing.pois + pois).distinctBy { it.id }
+    repo.saveRegionBundle(
+        PoiBundle(
+            region = regionId,
+            labelKo = existing.labelKo.ifBlank { regionId },
+            bbox = bb,
+            count = merged.size,
+            pois = merged,
+        ),
+    )
+}
+
+private suspend fun fetchNearbyPois(
+    overpass: OverpassClient,
+    bb: Bbox,
+    homeLang: String,
+    destLang: String,
+): List<Poi> {
+    val raw = overpass.fetchPois(bb, homeLang)
+    if (raw.isEmpty()) return emptyList()
+    return PoiLocalization.enrichForKoreanHome(raw, destLang, homeLang)
+}
+
+private suspend fun applyFetchedPois(
+    repo: PoiRepository,
+    regionId: String,
+    pois: List<Poi>,
+    anchorLat: Double,
+    anchorLon: Double,
+    homeCtx: Boolean,
+): PoiBundle? {
+    if (pois.isEmpty()) return null
+    withContext(Dispatchers.IO) {
+        if (homeCtx) {
+            persistHomeCachePois(repo, pois, anchorLat, anchorLon)
+        } else {
+            persistTravelRegionPois(repo, regionId, pois, anchorLat, anchorLon)
+        }
+    }
+    return if (homeCtx) {
+        repo.loadRegionBundle(HomeProgressiveDownloader.REGION_ID)
+    } else {
+        repo.loadRegionBundle(regionId)
+    }
 }
 
 @Composable
@@ -237,6 +295,7 @@ fun MapGuideScreen(
     var routingGraph by remember { mutableStateOf<RoutingGraph?>(null) }
     var routePoints by remember { mutableStateOf<List<Pair<Double, Double>>>(emptyList()) }
     var routeDistanceM by remember { mutableStateOf<Int?>(null) }
+    var straightLineDistanceM by remember { mutableStateOf<Int?>(null) }
     var ttsOk by remember { mutableStateOf(true) }
     var hasInternet by remember { mutableStateOf(WifiGate.hasInternet(context)) }
     var wasHomeLive by remember(region.id) { mutableStateOf(false) }
@@ -247,7 +306,7 @@ fun MapGuideScreen(
     var headingDeg by remember { mutableStateOf<Float?>(null) }
     var targetHeadingDeg by remember { mutableStateOf<Float?>(null) }
     var tileCacheGeneration by remember { mutableIntStateOf(0) }
-    var radarRadiusM by remember { mutableIntStateOf(200) }
+    var radarRadiusM by remember { mutableIntStateOf(1000) }
     var gpsPlaceLabel by remember { mutableStateOf<String?>(null) }
     var lastReverseLat by remember { mutableStateOf<Double?>(null) }
     var lastReverseLon by remember { mutableStateOf<Double?>(null) }
@@ -300,6 +359,8 @@ fun MapGuideScreen(
 
     LaunchedEffect(region.id) {
         regionLoaded = false
+        livePois = emptyList()
+        poiFetchError = null
         try {
             bundle = repo.loadRegionBundle(region.id)
             selectedPoiId = null
@@ -629,20 +690,19 @@ fun MapGuideScreen(
 
         if (!hasInternet) return@LaunchedEffect
 
-        val fetchLang = if (homeCtx) homeLang else destLang
         val radiiKm = listOf(4.0, 2.0, 8.0)
         for (rKm in radiiKm) {
             val bb = PoiLogic.bboxAround(anchorLat, anchorLon, rKm)
-            val result = runCatching { overpass.fetchPois(bb, fetchLang) }
+            val result = runCatching { fetchNearbyPois(overpass, bb, homeLang, destLang) }
             result.onSuccess { fetched ->
                 if (fetched.isNotEmpty()) {
                     livePois = fetched
                     poiFetchError = null
+                    val updated = applyFetchedPois(repo, region.id, fetched, anchorLat, anchorLon, homeCtx)
                     if (homeCtx) {
-                        withContext(Dispatchers.IO) {
-                            persistHomeCachePois(repo, fetched, anchorLat, anchorLon)
-                        }
-                        homeCachePois = fetched
+                        homeCachePois = updated?.pois ?: fetched
+                    } else if (updated != null) {
+                        bundle = updated
                     }
                     return@LaunchedEffect
                 }
@@ -653,10 +713,21 @@ fun MapGuideScreen(
         }
     }
 
-    // POI 없으면 8초마다 재시도 (GPS·시작 위치 공통)
-    LaunchedEffect(atHomeForPoi, homeLive, onSite, useGpsAnchor, hasInternet, hasRealGpsFix, pos.lat, pos.lon, previewAnchor.lat, previewAnchor.lon) {
+    // POI 없으면 8초마다 재시도 (GPS·시작 위치·미리보기 공통)
+    LaunchedEffect(
+        region.id,
+        atHomeForPoi,
+        homeLive,
+        onSite,
+        useGpsAnchor,
+        hasInternet,
+        hasRealGpsFix,
+        pos.lat,
+        pos.lon,
+        previewAnchor.lat,
+        previewAnchor.lon,
+    ) {
         val homeCtx = atHomeForPoi || homeLive
-        if (!homeCtx && !onSite && useGpsAnchor) return@LaunchedEffect
         val anchorLat = if (useGpsAnchor) pos.lat else previewAnchor.lat
         val anchorLon = if (useGpsAnchor) pos.lon else previewAnchor.lon
         while (true) {
@@ -669,17 +740,16 @@ fun MapGuideScreen(
                 continue
             }
             if (!hasInternet) continue
-            val fetchLang = if (homeCtx) homeLang else destLang
             val bb = PoiLogic.bboxAround(anchorLat, anchorLon, MapMath.POI_VIEW_RADIUS_KM)
-            runCatching { overpass.fetchPois(bb, fetchLang) }.onSuccess { fetched ->
+            runCatching { fetchNearbyPois(overpass, bb, homeLang, destLang) }.onSuccess { fetched ->
                 if (fetched.isNotEmpty()) {
                     livePois = fetched
                     poiFetchError = null
+                    val updated = applyFetchedPois(repo, region.id, fetched, anchorLat, anchorLon, homeCtx)
                     if (homeCtx) {
-                        withContext(Dispatchers.IO) {
-                            persistHomeCachePois(repo, fetched, anchorLat, anchorLon)
-                        }
-                        homeCachePois = fetched
+                        homeCachePois = updated?.pois ?: fetched
+                    } else if (updated != null) {
+                        bundle = updated
                     }
                 }
             }.onFailure { err ->
@@ -688,15 +758,17 @@ fun MapGuideScreen(
         }
     }
 
-    // WiFi 보충 — 오프라인 번들 + 시작 위치 주변 온라인 POI
-    LaunchedEffect(region.id, useGpsAnchor, atHomeForPoi, homeLive, hasInternet, destLang, previewAnchor.lat, previewAnchor.lon) {
+    // WiFi 보충 — 여행 미리보기(시작 위치) 즉시 1회
+    LaunchedEffect(region.id, useGpsAnchor, atHomeForPoi, homeLive, hasInternet, previewAnchor.lat, previewAnchor.lon) {
         if (useGpsAnchor || atHomeForPoi || homeLive || !hasInternet) return@LaunchedEffect
         delay(350)
         val bb = PoiLogic.bboxAround(previewAnchor.lat, previewAnchor.lon, MapMath.POI_VIEW_RADIUS_KM)
-        val fetched = runCatching { overpass.fetchPois(bb, destLang) }.getOrDefault(emptyList())
+        val fetched = runCatching { fetchNearbyPois(overpass, bb, homeLang, destLang) }.getOrDefault(emptyList())
         if (fetched.isNotEmpty()) {
             livePois = fetched
             poiFetchError = null
+            applyFetchedPois(repo, region.id, fetched, previewAnchor.lat, previewAnchor.lon, homeCtx = false)
+                ?.let { bundle = it }
         }
     }
 
@@ -729,7 +801,7 @@ fun MapGuideScreen(
     }
 
     LaunchedEffect(atHomeForPoi, homeLive, hasInternet, hasRealGpsFix, pos.lat, pos.lon) {
-        if (!atHomeForPoi || !hasInternet || !hasRealGpsFix) return@LaunchedEffect
+        if ((!atHomeForPoi && !homeLive) || !hasInternet || !hasRealGpsFix) return@LaunchedEffect
         suspend fun applyHomeRoutingGraph() {
             val homeGraph = RoutingGraph.reload(context, HomeProgressiveDownloader.REGION_ID)
             if (homeGraph.hasData) routingGraph = homeGraph
@@ -889,13 +961,13 @@ fun MapGuideScreen(
         !showRestaurant && !showHotel && !showSightseeing -> ui.emptyFilterKind
         allPois.isEmpty() && poiFetchError != null ->
             "명소 불러오기 실패 — WiFi 확인 후 잠시 기다려 주세요"
-        allPois.isEmpty() && atHomeForPoi && hasInternet ->
-            "주변 장소 불러오는 중…"
-        allPois.isEmpty() && atHomeForPoi && !hasInternet ->
-            "WiFi 필요 — 연결 후 주변 장소가 표시됩니다"
-        allPois.isEmpty() && !region.downloadComplete -> "다운로드 중 — 명소가 준비되면 표시됩니다"
-        allPois.isEmpty() -> "주변 장소 데이터를 불러오는 중이거나 없습니다"
+        allPois.isEmpty() && !hasInternet ->
+            "WiFi·데이터 필요 — 연결 후 주변 명소가 표시됩니다"
+        allPois.isEmpty() && hasInternet ->
+            "주변 명소 불러오는 중…"
         kindFiltered.isNotEmpty() && filteredPois.isEmpty() -> ui.emptyStarFilter
+        filteredPois.isEmpty() && radarRadiusM in 1..199 ->
+            "반경 ${radarRadiusM}m — 배지를 탭해 범위를 넓혀 보세요"
         else -> ui.emptyNearby
     }
 
@@ -908,22 +980,152 @@ fun MapGuideScreen(
         }
     }
 
-    LaunchedEffect(selectedPoiId, mapAnchorLat, mapAnchorLon, routingGraph, filteredPois) {
+    LaunchedEffect(
+        region.id,
+        homeLive,
+        atHomeForPoi,
+        hasInternet,
+        hasRealGpsFix,
+        region.downloadComplete,
+        region.lat,
+        region.lon,
+        pos.lat,
+        pos.lon,
+        config.homeLat,
+        config.homeLon,
+    ) {
+        val homeRouting = region.id == MapPolicy.HOME_LIVE_ONLINE_ID ||
+            homeLive ||
+            atHomeForPoi ||
+            TripNavigation.isHomeMapRegion(config, region)
+
+        if (homeRouting) {
+            val atHomeGps = hasRealGpsFix &&
+                TripNavigation.isAtHomeCountry(config, pos.lat, pos.lon)
+            val lat = when {
+                atHomeGps -> pos.lat
+                config.homeLat != 0.0 -> config.homeLat
+                else -> region.lat
+            }
+            val lon = when {
+                atHomeGps -> pos.lon
+                config.homeLon != 0.0 -> config.homeLon
+                else -> region.lon
+            }
+            val loaded = RoutingGraph.load(context, HomeProgressiveDownloader.REGION_ID)
+            if (loaded.hasData) routingGraph = loaded
+            if (hasInternet) {
+                val ok = OnDemandRouting.ensureGraph(
+                    context,
+                    MapPolicy.HOME_LIVE_ONLINE_ID,
+                    lat,
+                    lon,
+                    HomeProgressiveDownloader.HOME_RADIUS_KM,
+                )
+                if (ok) {
+                    routingGraph = OnDemandRouting.reloadGraph(context, MapPolicy.HOME_LIVE_ONLINE_ID)
+                }
+            }
+            return@LaunchedEffect
+        }
+
+        val graph = RoutingGraph.load(context, region.id)
+        if (graph.hasData) {
+            routingGraph = graph
+            return@LaunchedEffect
+        }
+        val radiusKm = if (region.downloadComplete) STOP_DOWNLOAD_RADIUS_KM else MapMath.POI_VIEW_RADIUS_KM
+        if (region.downloadComplete || hasInternet) {
+            val built = OnDemandRouting.ensureGraph(context, region.id, region.lat, region.lon, radiusKm)
+            if (built) {
+                routingGraph = OnDemandRouting.reloadGraph(context, region.id)
+            }
+        }
+    }
+
+    LaunchedEffect(
+        selectedPoiId,
+        mapAnchorLat,
+        mapAnchorLon,
+        routingGraph,
+        filteredPois,
+        hasInternet,
+        region.id,
+        region.downloadComplete,
+        homeLive,
+        atHomeForPoi,
+    ) {
         val target = selectedPoiId?.let { id -> filteredPois.find { it.id == id } }
         if (target == null) {
             routePoints = emptyList()
             routeDistanceM = null
+            straightLineDistanceM = null
             return@LaunchedEffect
         }
-        val graph = routingGraph
-        if (graph == null || !graph.hasData) {
-            routePoints = listOf(mapAnchorLat to mapAnchorLon, target.lat to target.lon)
-            routeDistanceM = PoiLogic.haversineM(mapAnchorLat, mapAnchorLon, target.lat, target.lon).toInt()
-            return@LaunchedEffect
+
+        straightLineDistanceM = PoiLogic.haversineM(
+            mapAnchorLat, mapAnchorLon, target.lat, target.lon,
+        ).toInt()
+        routePoints = emptyList()
+        routeDistanceM = null
+
+        val homeRouting = region.id == MapPolicy.HOME_LIVE_ONLINE_ID ||
+            homeLive ||
+            atHomeForPoi ||
+            TripNavigation.isHomeMapRegion(config, region)
+        val routingKey = if (homeRouting) MapPolicy.HOME_LIVE_ONLINE_ID else region.id
+        val radiusKm = when {
+            homeRouting -> HomeProgressiveDownloader.HOME_RADIUS_KM
+            region.downloadComplete -> STOP_DOWNLOAD_RADIUS_KM
+            else -> MapMath.POI_VIEW_RADIUS_KM
         }
-        val pts = graph.route(mapAnchorLat, mapAnchorLon, target.lat, target.lon)
-        routePoints = pts
-        routeDistanceM = if (pts.size >= 2) graph.routeLengthM(pts) else null
+
+        suspend fun loadGraph(): RoutingGraph? {
+            var graph = routingGraph?.takeIf { it.hasData }
+            if (graph == null) {
+                graph = RoutingGraph.load(context, OnDemandRouting.regionKeyFor(routingKey))
+                if (graph.hasData) routingGraph = graph
+            }
+            if (!graph.hasData && (hasInternet || region.downloadComplete || homeRouting)) {
+                val built = OnDemandRouting.ensureGraph(
+                    context, routingKey, mapAnchorLat, mapAnchorLon, radiusKm,
+                )
+                if (built) {
+                    graph = OnDemandRouting.reloadGraph(context, routingKey)
+                    routingGraph = graph
+                }
+            }
+            return graph?.takeIf { it.hasData }
+        }
+
+        var g = loadGraph() ?: return@LaunchedEffect
+
+        fun applyWalkRoute(graph: RoutingGraph): Boolean {
+            val pts = graph.route(mapAnchorLat, mapAnchorLon, target.lat, target.lon)
+            if (pts.size <= 2) return false
+            routePoints = pts
+            routeDistanceM = graph.routeLengthM(pts)
+            return true
+        }
+
+        if (!applyWalkRoute(g)) {
+            if (hasInternet && homeRouting) {
+                if (OnDemandRouting.forceRebuildHomeGraph(context, mapAnchorLat, mapAnchorLon)) {
+                    g = OnDemandRouting.reloadGraph(context, routingKey)
+                    routingGraph = g
+                    applyWalkRoute(g)
+                }
+            } else if (hasInternet) {
+                val rebuilt = OnDemandRouting.ensureGraph(
+                    context, routingKey, mapAnchorLat, mapAnchorLon, radiusKm,
+                )
+                if (rebuilt) {
+                    g = OnDemandRouting.reloadGraph(context, routingKey)
+                    routingGraph = g
+                    applyWalkRoute(g)
+                }
+            }
+        }
     }
 
     LaunchedEffect(selectedPoiId, filteredPois) {
@@ -973,6 +1175,14 @@ fun MapGuideScreen(
                         highlightedPoiId = selectedPoiId?.takeIf { id -> filteredPois.any { it.id == id } },
                         routePoints = routePoints,
                         routeDistanceM = routeDistanceM,
+                        straightLinePoints = if (selectedPoiId != null && straightLineDistanceM != null) {
+                            filteredPois.find { it.id == selectedPoiId }?.let { t ->
+                                listOf(mapAnchorLat to mapAnchorLon, t.lat to t.lon)
+                            } ?: emptyList()
+                        } else {
+                            emptyList()
+                        },
+                        straightLineDistanceM = straightLineDistanceM,
                         userRadiusKm = if (radarRadiusM > 0) {
                             MapMath.radarRadiusKm(radarRadiusM)
                         } else {
@@ -1132,6 +1342,7 @@ fun MapGuideScreen(
                                 speakLabel = ui.speak,
                                 selected = p.id == selectedPoiId,
                                 routeDistanceM = if (p.id == selectedPoiId) routeDistanceM else null,
+                                straightDistanceM = if (p.id == selectedPoiId) straightLineDistanceM else null,
                                 onClick = {
                                     selectedPoiId = if (selectedPoiId == p.id) null else p.id
                                 },
@@ -1189,11 +1400,12 @@ private fun MapFullTopChrome(
             text = title,
             modifier = Modifier
                 .weight(1f)
-                .padding(horizontal = 4.dp),
+                .padding(horizontal = 2.dp),
             style = TextStyle(
-                fontSize = 15.sp,
-                fontWeight = FontWeight.Bold,
-                shadow = Shadow(color = Color(0xCCFFFFFF), blurRadius = 6f),
+                fontSize = 11.sp,
+                lineHeight = 12.sp,
+                fontWeight = FontWeight.Medium,
+                shadow = Shadow(color = Color(0xCCFFFFFF), blurRadius = 4f),
             ),
             color = Color(0xFF0F172A),
             textAlign = TextAlign.Center,

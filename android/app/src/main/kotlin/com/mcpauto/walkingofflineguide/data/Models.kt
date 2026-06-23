@@ -55,6 +55,7 @@ data class TripConfig(
     @SerialName("home_lat") val homeLat: Double = 0.0,
     @SerialName("home_lon") val homeLon: Double = 0.0,
     @SerialName("destination_country") val destinationCountry: String = "",
+    @SerialName("arrival_airport") val arrivalAirport: CityPoint = CityPoint(),
     @SerialName("trip_start_epoch_day") val tripStartEpochDay: Long = 0L,
     @SerialName("trip_end_epoch_day") val tripEndEpochDay: Long = 0L,
     val legs: List<ScheduleLeg> = emptyList(),

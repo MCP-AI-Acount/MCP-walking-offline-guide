@@ -55,9 +55,9 @@ fun RadarRadiusBadge(
             text = label,
             style = MaterialTheme.typography.labelSmall,
             fontSize = when {
-                label == "OFF" -> 8.sp
-                label.length > 4 -> 7.sp
-                else -> 9.sp
+                label == "OFF" -> 6.5.sp
+                label.length > 4 -> 5.5.sp
+                else -> 7.sp
             },
             fontWeight = FontWeight.Bold,
             color = if (active) Color(0xFF15803D) else Color(0xFF64748B),
@@ -69,7 +69,7 @@ fun RadarRadiusBadge(
 
 private val MapChromeBtn = 36.dp
 private val MapChromeIcon = 22.dp
-private val MapRadarBadge = 38.dp
+private val MapRadarBadge = 40.dp
 
 /** 지도 우상단 — 반경(왼쪽) + GPS(오른쪽), 크기 통일 */
 @Composable

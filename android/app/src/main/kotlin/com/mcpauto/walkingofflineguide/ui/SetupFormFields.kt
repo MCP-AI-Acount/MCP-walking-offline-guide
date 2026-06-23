@@ -1,6 +1,7 @@
 package com.mcpauto.walkingofflineguide.ui
 
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.border
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -20,7 +21,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.ui.graphics.RectangleShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
@@ -155,65 +156,268 @@ fun formatDateDigitsInput(raw: String): String {
     }
 }
 
+fun formatMonthDayDigitsInput(raw: String): String {
+    val digits = raw.filter { it.isDigit() }.take(4)
+    return when {
+        digits.length <= 2 -> digits
+        else -> "${digits.take(2)}-${digits.drop(2)}"
+    }
+}
+
+fun formatMonthDay(epochDay: Long): String {
+    if (epochDay <= 0) return ""
+    val d = LocalDate.ofEpochDay(epochDay)
+    return "%02d-%02d".format(d.monthValue, d.dayOfMonth)
+}
+
+fun parseMonthDay(text: String, year: Int): LocalDate? {
+    val cleaned = text.trim().replace('.', '-').replace('/', '-')
+    val parts = cleaned.split("-").filter { it.isNotBlank() }
+    if (parts.size != 2) return null
+    val month = parts[0].toIntOrNull() ?: return null
+    val day = parts[1].toIntOrNull() ?: return null
+    return runCatching { LocalDate.of(year, month, day) }.getOrNull()
+}
+
+fun tripYearFromEpoch(tripStartEpochDay: Long): Int =
+    if (tripStartEpochDay > 0) LocalDate.ofEpochDay(tripStartEpochDay).year else LocalDate.now().year
+
 @Composable
-fun DateWheelField(
-    epochDay: Long,
-    onEpochDayChange: (Long) -> Unit,
-    label: String,
+private fun SetupLayerFrame(
+    title: String,
+    borderColor: Color,
+    backgroundColor: Color,
     modifier: Modifier = Modifier,
+    content: @Composable androidx.compose.foundation.layout.ColumnScope.() -> Unit,
 ) {
-    val context = LocalContext.current
-    val display = if (epochDay > 0) PoiLogic.formatDate(epochDay) else PoiLogic.formatDate(LocalDate.now().toEpochDay())
-    OutlinedButton(
-        onClick = {
-            val base = if (epochDay > 0) LocalDate.ofEpochDay(epochDay) else LocalDate.now()
-            DatePickerDialog(
-                context,
-                { _, y, m, d ->
-                    onEpochDayChange(LocalDate.of(y, m + 1, d).toEpochDay())
-                },
-                base.year,
-                base.monthValue - 1,
-                base.dayOfMonth,
-            ).apply {
-                datePicker.calendarViewShown = false
-                @Suppress("DEPRECATION")
-                datePicker.spinnersShown = true
-            }.show()
-        },
-        modifier = modifier.fillMaxWidth(),
+    Column(
+        modifier
+            .fillMaxWidth()
+            .border(1.5.dp, borderColor, RectangleShape)
+            .background(backgroundColor, RectangleShape)
+            .padding(12.dp),
     ) {
-        Text("$label: $display")
+        Text(title, fontWeight = FontWeight.SemiBold, color = borderColor)
+        Spacer(Modifier.height(8.dp))
+        content()
     }
 }
 
 @Composable
-fun LegDateRangeRow(
+private fun RectDateCell(
+    label: String,
+    display: String,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+    accent: Color = Color(0xFF334155),
+) {
+    Column(
+        modifier
+            .border(1.dp, accent.copy(alpha = 0.35f), RectangleShape)
+            .background(Color.White, RectangleShape)
+            .clickable(onClick = onClick)
+            .padding(horizontal = 10.dp, vertical = 8.dp),
+    ) {
+        Text(label, style = MaterialTheme.typography.labelSmall, color = Color(0xFF64748B))
+        Text(display, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Medium)
+    }
+}
+
+@Composable
+fun TripDateRangeRow(
     startEpochDay: Long,
     endEpochDay: Long,
     onStartChange: (Long) -> Unit,
     onEndChange: (Long) -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    Row(modifier.fillMaxWidth()) {
-        DateWheelField(
+    val context = LocalContext.current
+    fun showPicker(current: Long, onPick: (Long) -> Unit) {
+        val base = if (current > 0) LocalDate.ofEpochDay(current) else LocalDate.now()
+        DatePickerDialog(
+            context,
+            { _, y, m, d -> onPick(LocalDate.of(y, m + 1, d).toEpochDay()) },
+            base.year,
+            base.monthValue - 1,
+            base.dayOfMonth,
+        ).apply {
+            datePicker.calendarViewShown = false
+            @Suppress("DEPRECATION")
+            datePicker.spinnersShown = true
+        }.show()
+    }
+    val startDisplay = if (startEpochDay > 0) PoiLogic.formatDate(startEpochDay) else "선택"
+    val endDisplay = if (endEpochDay > 0) PoiLogic.formatDate(endEpochDay) else "선택"
+    Row(modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        RectDateCell(
+            label = "출발일",
+            display = startDisplay,
+            onClick = {
+                showPicker(startEpochDay) { start ->
+                    onStartChange(start)
+                    if (endEpochDay > 0 && endEpochDay < start) onEndChange(start)
+                }
+            },
+            modifier = Modifier.weight(1f),
+            accent = Color(0xFF4F46E5),
+        )
+        RectDateCell(
+            label = "귀국일",
+            display = endDisplay,
+            onClick = {
+                showPicker(endEpochDay.coerceAtLeast(startEpochDay.takeIf { it > 0 } ?: endEpochDay)) { end ->
+                    val start = startEpochDay.takeIf { it > 0 } ?: LocalDate.now().toEpochDay()
+                    onEndChange(end.coerceAtLeast(start))
+                }
+            },
+            modifier = Modifier.weight(1f),
+            accent = Color(0xFF4F46E5),
+        )
+    }
+}
+
+@Composable
+fun LegMonthDayRangeRow(
+    tripYear: Int,
+    tripStartBound: Long,
+    tripEndBound: Long,
+    startEpochDay: Long,
+    endEpochDay: Long,
+    onStartChange: (Long) -> Unit,
+    onEndChange: (Long) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val context = LocalContext.current
+    fun showPicker(current: Long, onPick: (Long) -> Unit) {
+        val base = if (current > 0) LocalDate.ofEpochDay(current) else LocalDate.of(tripYear, 1, 1)
+        DatePickerDialog(
+            context,
+            { _, y, m, d ->
+                val picked = LocalDate.of(tripYear, m + 1, d).toEpochDay()
+                onPick(picked)
+            },
+            tripYear,
+            base.monthValue - 1,
+            base.dayOfMonth,
+        ).apply {
+            datePicker.calendarViewShown = false
+            @Suppress("DEPRECATION")
+            datePicker.spinnersShown = true
+        }.show()
+    }
+    Row(modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        MonthDayField(
             epochDay = startEpochDay,
+            tripYear = tripYear,
+            label = "시작 (월-일)",
             onEpochDayChange = { start ->
                 onStartChange(start)
                 if (endEpochDay > 0 && endEpochDay < start) onEndChange(start)
             },
-            label = "시작일",
+            onOpenPicker = { showPicker(startEpochDay, onStartChange) },
             modifier = Modifier.weight(1f),
+            accent = Color(0xFF0F766E),
         )
-        Spacer(Modifier.width(8.dp))
-        DateWheelField(
+        MonthDayField(
             epochDay = endEpochDay.coerceAtLeast(startEpochDay.takeIf { it > 0 } ?: endEpochDay),
+            tripYear = tripYear,
+            label = "종료 (월-일)",
             onEpochDayChange = { end ->
-                val start = startEpochDay.takeIf { it > 0 } ?: LocalDate.now().toEpochDay()
+                val start = startEpochDay.takeIf { it > 0 } ?: LocalDate.of(tripYear, 1, 1).toEpochDay()
                 onEndChange(end.coerceAtLeast(start))
             },
-            label = "종료일",
+            onOpenPicker = {
+                showPicker(endEpochDay.coerceAtLeast(startEpochDay.takeIf { it > 0 } ?: endEpochDay), onEndChange)
+            },
             modifier = Modifier.weight(1f),
+            accent = Color(0xFF0F766E),
+        )
+    }
+    if (tripStartBound > 0 && tripEndBound >= tripStartBound) {
+        Text(
+            "여행 ${formatMonthDay(tripStartBound)}~${formatMonthDay(tripEndBound)} (${tripYear}년) 안에서만 선택",
+            style = MaterialTheme.typography.labelSmall,
+            color = Color(0xFF64748B),
+            modifier = Modifier.padding(top = 4.dp),
+        )
+    }
+}
+
+@Composable
+private fun MonthDayField(
+    epochDay: Long,
+    tripYear: Int,
+    label: String,
+    onEpochDayChange: (Long) -> Unit,
+    onOpenPicker: () -> Unit,
+    modifier: Modifier = Modifier,
+    accent: Color = Color(0xFF0F766E),
+) {
+    var text by remember(epochDay, tripYear) { mutableStateOf(formatMonthDay(epochDay)) }
+    Column(modifier) {
+        OutlinedTextField(
+            value = text,
+            onValueChange = { raw ->
+                val formatted = formatMonthDayDigitsInput(raw)
+                text = formatted
+                parseMonthDay(formatted, tripYear)?.let { onEpochDayChange(it.toEpochDay()) }
+            },
+            label = { Text(label) },
+            placeholder = { Text("06-25") },
+            modifier = Modifier.fillMaxWidth(),
+            singleLine = true,
+            shape = RectangleShape,
+        )
+        Text(
+            "달력",
+            color = accent,
+            style = MaterialTheme.typography.labelSmall,
+            modifier = Modifier
+                .padding(top = 2.dp)
+                .clickable(onClick = onOpenPicker),
+        )
+    }
+}
+
+@Composable
+fun TripOverviewPanel(
+    arrivalAirport: CityPoint,
+    onAirportChange: (CityPoint) -> Unit,
+    tripStartEpochDay: Long,
+    tripEndEpochDay: Long,
+    onTripStartChange: (Long) -> Unit,
+    onTripEndChange: (Long) -> Unit,
+    catalog: GeoCatalog,
+    geocoder: NominatimGeocoder,
+    modifier: Modifier = Modifier,
+) {
+    SetupLayerFrame(
+        title = "여행 개요",
+        borderColor = Color(0xFF4F46E5),
+        backgroundColor = Color(0xFFEEF2FF),
+        modifier = modifier,
+    ) {
+        CityConfirmField(
+            point = arrivalAirport,
+            onDraftChange = {},
+            onConfirm = onAirportChange,
+            catalog = catalog,
+            geocoder = geocoder,
+            countryHint = "",
+            label = "입국 공항",
+            placeholder = "공항명·IATA (예: Marco Polo, VCE)",
+        )
+        Text(
+            "여행 기간 (연도 포함)",
+            style = MaterialTheme.typography.labelMedium,
+            fontWeight = FontWeight.Medium,
+            modifier = Modifier.padding(top = 8.dp, bottom = 4.dp),
+        )
+        TripDateRangeRow(
+            startEpochDay = tripStartEpochDay,
+            endEpochDay = tripEndEpochDay,
+            onStartChange = onTripStartChange,
+            onEndChange = onTripEndChange,
         )
     }
 }
@@ -472,6 +676,9 @@ fun CityConfirmField(
 fun LegRouteEditor(
     leg: ScheduleLeg,
     legIndex: Int,
+    tripYear: Int,
+    tripStartBound: Long,
+    tripEndBound: Long,
     countryHint: String,
     catalog: GeoCatalog,
     geocoder: NominatimGeocoder,
@@ -480,43 +687,44 @@ fun LegRouteEditor(
     canDelete: Boolean = true,
     cityPlaceholder: String? = null,
 ) {
-    Card(
-        modifier = Modifier.fillMaxWidth().padding(vertical = 6.dp),
-        colors = CardDefaults.cardColors(
-            containerColor = if (leg.legConfirmed) Color(0xFFEFF6FF) else Color(0xFFFAFAFA),
-        ),
+    val legBorder = if (leg.legConfirmed) Color(0xFF15803D) else Color(0xFFCA8A04)
+    val legBg = if (leg.legConfirmed) Color(0xFFF0FDF4) else Color(0xFFFFFBEB)
+    SetupLayerFrame(
+        title = "구간 ${legIndex + 1}",
+        borderColor = legBorder,
+        backgroundColor = legBg,
+        modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
     ) {
-        Column(Modifier.padding(horizontal = 12.dp, vertical = 10.dp)) {
-            Row(
-                Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Text("일정 ${legIndex + 1}", fontWeight = FontWeight.Bold)
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    if (leg.legConfirmed) {
-                        Text(
-                            "확정됨",
-                            color = Color(0xFF15803D),
-                            style = MaterialTheme.typography.labelMedium,
-                            modifier = Modifier.padding(end = 4.dp),
-                        )
-                    }
-                    if (canDelete && onDeleteLeg != null) {
-                        IconButton(onClick = onDeleteLeg) {
-                            Icon(Icons.Default.Close, contentDescription = "일정 삭제", tint = Color(0xFFDC2626))
-                        }
-                    }
+        Row(
+            Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.End,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            if (leg.legConfirmed) {
+                Text(
+                    "확정됨",
+                    color = Color(0xFF15803D),
+                    style = MaterialTheme.typography.labelMedium,
+                    modifier = Modifier.padding(end = 4.dp),
+                )
+            }
+            if (canDelete && onDeleteLeg != null) {
+                IconButton(onClick = onDeleteLeg) {
+                    Icon(Icons.Default.Close, contentDescription = "구간 삭제", tint = Color(0xFFDC2626))
                 }
             }
+        }
 
-            LegDateRangeRow(
-                startEpochDay = leg.startEpochDay,
-                endEpochDay = leg.endEpochDay,
-                onStartChange = { d -> onLegChange(leg.copy(startEpochDay = d, legConfirmed = false)) },
-                onEndChange = { d -> onLegChange(leg.copy(endEpochDay = d, legConfirmed = false)) },
-                modifier = Modifier.padding(bottom = 8.dp),
-            )
+        LegMonthDayRangeRow(
+            tripYear = tripYear,
+            tripStartBound = tripStartBound,
+            tripEndBound = tripEndBound,
+            startEpochDay = leg.startEpochDay,
+            endEpochDay = leg.endEpochDay,
+            onStartChange = { d -> onLegChange(leg.copy(startEpochDay = d, legConfirmed = false)) },
+            onEndChange = { d -> onLegChange(leg.copy(endEpochDay = d, legConfirmed = false)) },
+            modifier = Modifier.padding(bottom = 8.dp),
+        )
 
             CityConfirmField(
                 point = leg.startPoint,
@@ -586,17 +794,19 @@ fun LegRouteEditor(
                 catalog = catalog,
                 geocoder = geocoder,
                 countryHint = countryHint,
-                label = "도보 도착지 (도시·거리·장소)",
-                placeholder = cityPlaceholder,
-            )
-        }
+            label = "도보 도착지 (도시·거리·장소)",
+            placeholder = cityPlaceholder,
+        )
     }
 }
 
-/** 1단계 — 일정(leg) 카드 세로 목록: 전체 너비, 경유지는 카드 안 세로 */
+/** 1단계 — 도보 구간(leg) 목록 */
 @Composable
 fun ScheduleLegsVerticalList(
     legs: List<ScheduleLeg>,
+    tripYear: Int,
+    tripStartBound: Long,
+    tripEndBound: Long,
     destCountry: String,
     catalog: GeoCatalog,
     geocoder: NominatimGeocoder,
@@ -608,7 +818,7 @@ fun ScheduleLegsVerticalList(
 ) {
     val listScroll = rememberScrollState()
     LaunchedEffect(legs.size) {
-        if (legs.size > 1) {
+        if (legs.size > 0) {
             listScroll.animateScrollTo(listScroll.maxValue)
         }
     }
@@ -620,17 +830,21 @@ fun ScheduleLegsVerticalList(
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Text(
-                "도시 일정 · ${legs.size}개",
+                if (legs.isEmpty()) "도보 구간" else "도보 구간 · ${legs.size}개",
                 fontWeight = FontWeight.SemiBold,
                 color = AppMenuStyle.text,
             )
-            OutlinedButton(onClick = onAddLeg) {
+            OutlinedButton(onClick = onAddLeg, shape = RectangleShape) {
                 Icon(Icons.Default.Add, contentDescription = null)
-                Text("일정 추가", modifier = Modifier.padding(start = 4.dp))
+                Text("구간 추가", modifier = Modifier.padding(start = 4.dp))
             }
         }
         Text(
-            "일정마다 출발→경유→도착. 경유지는 아래로 추가됩니다.",
+            if (legs.isEmpty()) {
+                "「구간 추가」로 출발→경유→도착 도보 코스를 넣어 주세요."
+            } else {
+                "구간마다 출발→경유→도착. 날짜는 월-일만 입력 (연도는 여행 개요 기준)."
+            },
             style = MaterialTheme.typography.labelSmall,
             color = AppMenuStyle.muted,
             modifier = Modifier.padding(bottom = 8.dp),
@@ -641,33 +855,34 @@ fun ScheduleLegsVerticalList(
                 .fillMaxWidth()
                 .verticalScroll(listScroll)
                 .graphicsLayer { clip = false },
-            verticalArrangement = Arrangement.spacedBy(12.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp),
         ) {
             legs.forEachIndexed { idx, leg ->
                 Column(
                     Modifier
                         .fillMaxWidth()
-                        .graphicsLayer { clip = false }
-                        .background(AppMenuStyle.card, RoundedCornerShape(12.dp))
-                        .padding(4.dp),
+                        .graphicsLayer { clip = false },
                 ) {
                     LegRouteEditor(
                         leg = leg,
                         legIndex = idx,
+                        tripYear = tripYear,
+                        tripStartBound = tripStartBound,
+                        tripEndBound = tripEndBound,
                         countryHint = destCountry,
                         catalog = catalog,
                         geocoder = geocoder,
                         onLegChange = { updated -> onLegChange(idx, updated) },
                         onDeleteLeg = { onDeleteLeg(idx) },
-                        canDelete = legs.size > 1 || leg.startPoint.name.isNotBlank() ||
-                            leg.endPoint.name.isNotBlank() || leg.waypoints.any { it.name.isNotBlank() },
+                        canDelete = true,
                         cityPlaceholder = cityPlaceholder,
                     )
                     if (isLegReady(leg) && !leg.legConfirmed) {
                         Button(
                             onClick = { onLegChange(idx, leg.copy(legConfirmed = true)) },
-                            modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 4.dp),
-                        ) { Text("이 일정 확정") }
+                            modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp, vertical = 4.dp),
+                            shape = RectangleShape,
+                        ) { Text("이 구간 확정") }
                     }
                 }
             }

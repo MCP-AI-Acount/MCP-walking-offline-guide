@@ -89,6 +89,8 @@ fun OfflineTileMap(
     highlightedPoiId: String? = null,
     routePoints: List<Pair<Double, Double>> = emptyList(),
     routeDistanceM: Int? = null,
+    straightLinePoints: List<Pair<Double, Double>> = emptyList(),
+    straightLineDistanceM: Int? = null,
     onPoiClick: (Poi) -> Unit = {},
     /** 레이더 반경(km) — 유저 주변 원, null/0이면 숨김 */
     userRadiusKm: Double? = null,
@@ -118,6 +120,7 @@ fun OfflineTileMap(
     val regionClipRef = rememberUpdatedState(regionClipBbox)
     val highlightedPoiRef = rememberUpdatedState(highlightedPoiId)
     val routePointsRef = rememberUpdatedState(routePoints)
+    val straightLineRef = rememberUpdatedState(straightLinePoints)
     var smoothBearingDeg by remember { mutableFloatStateOf(0f) }
     var onlineRev by remember { mutableIntStateOf(0) }
     // POI 목록 변경 시 오버레이 재합성
@@ -445,16 +448,31 @@ fun OfflineTileMap(
                             )
 
                             // POI·경로 — 타일과 동일 overscan·동일 회전 레이어 (2D 북쪽 위, 이중 회전 없음)
-                            val routePath = android.graphics.Path()
-                            if (routePointsRef.value.size >= 2) {
-                                routePointsRef.value.forEachIndexed { idx, (lat, lon) ->
+                            fun drawRoutePath(points: List<Pair<Double, Double>>, paint: android.graphics.Paint) {
+                                if (points.size < 2) return
+                                val path = android.graphics.Path()
+                                points.forEachIndexed { idx, (lat, lon) ->
                                     val (px, py) = mapContentPoint(
                                         lat, lon, renderCam, vfW, vfH, drawW, drawH, gpsAnchor, user,
                                     )
-                                    if (idx == 0) routePath.moveTo(px, py) else routePath.lineTo(px, py)
+                                    if (idx == 0) path.moveTo(px, py) else path.lineTo(px, py)
                                 }
-                                nc.drawPath(routePath, routeGlowPaint)
-                                nc.drawPath(routePath, routeLinePaint)
+                                nc.drawPath(path, paint)
+                            }
+                            drawRoutePath(straightLineRef.value, straightLinePaint)
+                            if (routePointsRef.value.size >= 2) {
+                                nc.drawPath(
+                                    android.graphics.Path().apply {
+                                        routePointsRef.value.forEachIndexed { idx, (lat, lon) ->
+                                            val (px, py) = mapContentPoint(
+                                                lat, lon, renderCam, vfW, vfH, drawW, drawH, gpsAnchor, user,
+                                            )
+                                            if (idx == 0) moveTo(px, py) else lineTo(px, py)
+                                        }
+                                    },
+                                    routeGlowPaint,
+                                )
+                                drawRoutePath(routePointsRef.value, routeLinePaint)
                             }
 
                             if (!gpsLocked) {
@@ -594,6 +612,15 @@ fun OfflineTileMap(
                 ) {
                     Spacer(Modifier.weight(1f))
                     Column(horizontalAlignment = Alignment.End) {
+                        straightLineDistanceM?.let { d ->
+                            Text(
+                                "직선 ${formatRouteDistance(d)}",
+                                color = Color(0xFFFCA5A5),
+                                fontSize = 10.sp,
+                                fontWeight = androidx.compose.ui.text.font.FontWeight.Medium,
+                                modifier = Modifier.padding(bottom = 1.dp),
+                            )
+                        }
                         routeDistanceM?.let { d ->
                             Text(
                                 "경로 ${formatRouteDistance(d)}",
@@ -615,7 +642,7 @@ fun OfflineTileMap(
     }
 }
 
-/** 지도 왼쪽 하단 거리 척도 — 눈금 위치 고정, 라벨만 눈금 바로 위(겹침 없음) */
+/** 지도 왼쪽 하단 거리 척도 — 눈금 위 · 라벨 아래(한 줄) */
 @Composable
 private fun MapScaleRuler(
     label: String,
@@ -623,16 +650,16 @@ private fun MapScaleRuler(
     modifier: Modifier = Modifier,
 ) {
     val rulerH = 7.dp
+    val labelMinW = maxOf(barWidth, 72.dp)
     val labelStyle = TextStyle(
-        fontSize = 10.sp,
+        fontSize = 9.sp,
         lineHeight = 10.sp,
         fontWeight = FontWeight.SemiBold,
         platformStyle = PlatformTextStyle(includeFontPadding = false),
     )
-    Box(modifier = modifier.width(barWidth)) {
+    Column(modifier = modifier.width(labelMinW)) {
         Canvas(
             Modifier
-                .align(Alignment.BottomStart)
                 .width(barWidth)
                 .height(rulerH),
         ) {
@@ -659,9 +686,11 @@ private fun MapScaleRuler(
             text = label,
             style = labelStyle,
             color = Color(0xFF1E293B),
+            maxLines = 1,
+            softWrap = false,
             modifier = Modifier
-                .align(Alignment.BottomStart)
-                .padding(bottom = rulerH + 1.dp),
+                .width(labelMinW)
+                .padding(top = 2.dp),
         )
     }
 }
@@ -751,6 +780,14 @@ private val poiLabelPaint = android.graphics.Paint().apply {
 }
 
 private val tileBitmapPaint = android.graphics.Paint(android.graphics.Paint.FILTER_BITMAP_FLAG)
+
+private val straightLinePaint = android.graphics.Paint().apply {
+    isAntiAlias = true
+    color = android.graphics.Color.parseColor("#99F87171")
+    strokeWidth = 2.5f
+    style = android.graphics.Paint.Style.STROKE
+    strokeCap = android.graphics.Paint.Cap.ROUND
+}
 
 private val routeLinePaint = android.graphics.Paint().apply {
     isAntiAlias = true

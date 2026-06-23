@@ -57,6 +57,7 @@ fun PoiListItem(
     speakLabel: String,
     selected: Boolean = false,
     routeDistanceM: Int? = null,
+    straightDistanceM: Int? = null,
     onClick: () -> Unit = {},
     onSpeak: () -> Unit,
 ) {
@@ -106,6 +107,9 @@ fun PoiListItem(
                 }
                 StarRating(PoiLogic.displayRating(poi), modifier = Modifier.padding(top = 2.dp))
                 poi.distanceM?.let { Text(formatDistance(it), color = accent, style = MaterialTheme.typography.labelSmall) }
+                straightDistanceM?.let {
+                    Text("직선 ${formatDistance(it)}", color = Color(0xFFFCA5A5), style = MaterialTheme.typography.labelSmall)
+                }
                 routeDistanceM?.let {
                     Text("$routePrefix ${formatDistance(it)}", color = Color(0xFF2563EB), style = MaterialTheme.typography.labelSmall)
                 }

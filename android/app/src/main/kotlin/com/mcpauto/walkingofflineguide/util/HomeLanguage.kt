@@ -87,7 +87,7 @@ object HomeLanguage {
 
     private val uiKo = MapUiStrings(
         restaurant = "식당", hotel = "숙소", sight = "명소",
-        routeHint = "명소를 탭하면 도보 최단경로(파란 선)와 거리가 표시됩니다.",
+        routeHint = "명소 탭 — 직선(연한 빨강) + 도보경로(파란 선)와 거리 표시",
         emptyNearby = "주변 장소 없음",
         emptyFilterKind = "표시할 종류를 하나 이상 켜 주세요.",
         emptyStarFilter = "선택한 추천도 이상 장소가 없습니다.",

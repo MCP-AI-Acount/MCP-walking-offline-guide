@@ -1,5 +1,6 @@
 package com.mcpauto.walkingofflineguide.ui
 
+import android.content.Intent
 import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -40,6 +41,12 @@ fun RegionImportButton(
         ActivityResultContracts.OpenDocument(),
     ) { uri: Uri? ->
         if (uri == null) return@rememberLauncherForActivityResult
+        runCatching {
+            context.contentResolver.takePersistableUriPermission(
+                uri,
+                Intent.FLAG_GRANT_READ_URI_PERMISSION,
+            )
+        }
         scope.launch {
             importing = true
             runCatching {
@@ -54,7 +61,15 @@ fun RegionImportButton(
     }
 
     OutlinedButton(
-        onClick = { launcher.launch(arrayOf(RegionImportManager.MIME_ZIP, "application/x-zip-compressed")) },
+        onClick = {
+            launcher.launch(
+                arrayOf(
+                    RegionImportManager.MIME_ZIP,
+                    "application/x-zip-compressed",
+                    "application/octet-stream",
+                ),
+            )
+        },
         enabled = enabled && !importing,
         modifier = modifier.fillMaxWidth(),
     ) {
@@ -68,9 +83,15 @@ fun RegionImportButton(
     }
 
     Text(
-        "PC에서 받은 wog-도시.zip 을 선택하세요 (다운로드·문서 폴더)",
+        "PC에서 export_region_bundle.py 로 만든 zip → 다운로드·문서 폴더에서 선택",
         style = MaterialTheme.typography.labelSmall,
         color = AppMenuStyle.muted,
         modifier = Modifier.padding(top = 4.dp),
+    )
+    Text(
+        "일반 폴더에 zip만 넣어두면 앱이 읽지 않습니다. 반드시 이 버튼으로 선택하세요.",
+        style = MaterialTheme.typography.labelSmall,
+        color = AppMenuStyle.muted,
+        modifier = Modifier.padding(top = 2.dp),
     )
 }

@@ -56,6 +56,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
@@ -77,12 +78,13 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.zIndex
 import androidx.core.content.ContextCompat
 import com.mcpauto.walkingofflineguide.map.MapUiColors
+import com.mcpauto.walkingofflineguide.data.CityPoint
 import com.mcpauto.walkingofflineguide.data.CrashRecovery
+import com.mcpauto.walkingofflineguide.data.defaultScheduleLeg
 import com.mcpauto.walkingofflineguide.data.DownloadJobState
 import com.mcpauto.walkingofflineguide.data.GeoCatalog
 import com.mcpauto.walkingofflineguide.data.RegionRecord
 import com.mcpauto.walkingofflineguide.data.ScheduleLeg
-import com.mcpauto.walkingofflineguide.data.defaultScheduleLeg
 import com.mcpauto.walkingofflineguide.data.normalizeLegDates
 import com.mcpauto.walkingofflineguide.data.tripEpochRangeFromLegs
 import com.mcpauto.walkingofflineguide.data.TripConfig
@@ -95,6 +97,7 @@ import com.mcpauto.walkingofflineguide.download.RegionDownloadForegroundService
 import com.mcpauto.walkingofflineguide.download.DownloadProgress
 import com.mcpauto.walkingofflineguide.download.DownloadProgressReader
 import com.mcpauto.walkingofflineguide.download.HomeProgressiveDownloader
+import com.mcpauto.walkingofflineguide.download.HomeRoutingBootstrap
 import com.mcpauto.walkingofflineguide.download.RegionDownloadManager
 import com.mcpauto.walkingofflineguide.logic.LocationHelper
 import com.mcpauto.walkingofflineguide.logic.MapAppPolicy
@@ -367,6 +370,7 @@ fun WalkingApp() {
                 scope.launch {
                     config = updated
                     store.saveConfig(updated)
+                    HomeRoutingBootstrap.prefetchIfOnline(context, updated)
                     screen = AppScreen.Hub
                 }
             },
@@ -452,17 +456,14 @@ fun WalkingApp() {
                     }
                     val fix = lastGps ?: return@launch
                     val hasNet = WifiGate.hasInternet(context)
-                    if (!hasNet) return@launch
                     when {
                         TripNavigation.isAtHomeCountry(config, fix.first, fix.second) -> {
+                            if (!hasNet) return@launch
                             val region = MapPolicy.homeLiveRegion(config, regions, fix.first, fix.second)
                                 ?: MapPolicy.onlineHomeStub(config, fix.first, fix.second)
                             screen = AppScreen.Map(region.id)
                         }
-                        TripNavigation.isAtDestinationCountry(config, regions, fix.first, fix.second) ||
-                            MapPolicy.travelRegion(
-                                config, regions, fix.first, fix.second, hasGpsFix = true,
-                            ) != null -> {
+                        else -> {
                             val region = MapPolicy.travelRegion(
                                 config, regions, fix.first, fix.second, hasGpsFix = true,
                             ) ?: regions.filter { it.downloadComplete }
@@ -477,8 +478,7 @@ fun WalkingApp() {
                     }
                 }
             },
-            showCurrentRegion = WifiGate.hasInternet(context) &&
-                config.basicSetupComplete &&
+            showCurrentRegion = config.basicSetupComplete &&
                 (
                     config.homeCountry.isNotBlank() ||
                         regions.any { it.downloadComplete && !TripNavigation.isHomeRegion(config, it) }
@@ -947,6 +947,12 @@ private fun HubScreen(
                     }
                 }
                 MenuPrimaryButton("여행 설정", onSchedule, Modifier.padding(top = 6.dp))
+                Text(
+                    "지도·명소 데이터는 앱 전용 저장소에만 저장됩니다. 다운로드 폴더에 zip을 넣어두면 읽지 않습니다.",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = AppMenuStyle.muted,
+                    modifier = Modifier.padding(top = 8.dp),
+                )
                 RegionImportButton(
                     store = store,
                     enabled = !downloadRunning,
@@ -1108,11 +1114,49 @@ private fun TravelSetupScreen(
     val catalog = remember { GeoCatalog(context) }
 
     var step by remember { mutableIntStateOf(if (resumeJob != null) 2 else 1) }
-    val isFreshSetup = resumeJob == null
-    var destCountry by remember(resumeJob) {
+    val isFreshSetup = resumeJob == null && initial.legs.isEmpty() && initial.arrivalAirport.name.isBlank()
+    var destCountry by remember(resumeJob, initial) {
         mutableStateOf(
-            if (isFreshSetup) "" else resumeJob?.destinationCountry?.ifBlank { resumeJob.countryLabel }
-                ?: initial.destinationCountry,
+            when {
+                initial.destinationCountry.isNotBlank() -> initial.destinationCountry
+                isFreshSetup -> "이탈리아"
+                else -> resumeJob?.destinationCountry?.ifBlank { resumeJob.countryLabel }.orEmpty()
+            },
+        )
+    }
+    var arrivalAirport by remember(resumeJob, initial) {
+        mutableStateOf(
+            when {
+                initial.arrivalAirport.confirmed && initial.arrivalAirport.name.isNotBlank() -> initial.arrivalAirport
+                isFreshSetup -> CityPoint(
+                    name = "Venice Marco Polo Airport",
+                    lat = 45.5053,
+                    lon = 12.3519,
+                    confirmed = true,
+                )
+                else -> CityPoint()
+            },
+        )
+    }
+    var tripPeriodStart by remember(resumeJob, initial) {
+        mutableLongStateOf(
+            when {
+                resumeJob != null && resumeJob.tripStartEpochDay > 0 -> resumeJob.tripStartEpochDay
+                initial.tripStartEpochDay > 0 -> initial.tripStartEpochDay
+                isFreshSetup -> LocalDate.of(2026, 6, 25).toEpochDay()
+                else -> LocalDate.now().toEpochDay()
+            },
+        )
+    }
+    var tripPeriodEnd by remember(resumeJob, initial) {
+        mutableLongStateOf(
+            when {
+                resumeJob != null && resumeJob.tripEndEpochDay > 0 -> resumeJob.tripEndEpochDay
+                initial.tripEndEpochDay > 0 -> initial.tripEndEpochDay
+                isFreshSetup -> LocalDate.of(2026, 7, 14).toEpochDay()
+                initial.tripStartEpochDay > 0 -> initial.tripStartEpochDay + 7
+                else -> LocalDate.now().toEpochDay() + 7
+            },
         )
     }
     var skipHub by remember { mutableStateOf(resumeJob?.skipHubMenu ?: initial.skipHubMenu) }
@@ -1133,18 +1177,16 @@ private fun TravelSetupScreen(
         homeEntry?.capital?.takeIf { it.isNotBlank() } ?: "수도"
     }
 
-    val legs = remember(resumeJob) {
+    val legs = remember(resumeJob, initial) {
         mutableStateListOf<ScheduleLeg>().also { list ->
-            val raw = if (isFreshSetup) {
-                listOf(defaultScheduleLeg(store.newLegId()))
-            } else {
-                resumeJob?.legs?.takeIf { it.isNotEmpty() }?.map { it.copy(legConfirmed = true) }
-                    ?: initial.legs.takeIf { it.isNotEmpty() }?.map { it.copy(legConfirmed = false) }
-                    ?: listOf(defaultScheduleLeg(store.newLegId()))
+            val raw = when {
+                resumeJob?.legs?.isNotEmpty() == true ->
+                    resumeJob.legs.map { it.copy(legConfirmed = true) }
+                initial.legs.isNotEmpty() ->
+                    initial.legs.map { it.copy(legConfirmed = false) }
+                else -> emptyList()
             }
-            val tripStartSeed = resumeJob?.tripStartEpochDay ?: initial.tripStartEpochDay
-            val tripEndSeed = resumeJob?.tripEndEpochDay ?: initial.tripEndEpochDay
-            list.addAll(normalizeLegDates(raw, tripStartSeed, tripEndSeed))
+            list.addAll(normalizeLegDates(raw, tripPeriodStart, tripPeriodEnd))
         }
     }
     var downloading by remember { mutableStateOf(DownloadSession.running.value) }
@@ -1187,17 +1229,19 @@ private fun TravelSetupScreen(
     }
 
     fun buildJob(jobSeed: DownloadJobState? = null): DownloadJobState? {
-        val normalized = normalizeLegDates(legs.toList())
+        val normalized = normalizeLegDates(legs.toList(), tripPeriodStart, tripPeriodEnd)
         val stops = buildStopsFromLegs(normalized)
         if (stops.isEmpty()) return null
-        val (tripStartDay, tripEndDay) = tripEpochRangeFromLegs(normalized)
+        val (fromLegsStart, fromLegsEnd) = tripEpochRangeFromLegs(normalized)
+        val startDay = tripPeriodStart.takeIf { it > 0 } ?: fromLegsStart
+        val endDay = tripPeriodEnd.takeIf { it > 0 } ?: fromLegsEnd
         return DownloadJobState(
             active = true,
             countryLabel = destCountry,
             homeCountryCode = homeCountryCode,
             destinationCountry = destCountry,
-            tripStartEpochDay = tripStartDay,
-            tripEndEpochDay = tripEndDay,
+            tripStartEpochDay = startDay,
+            tripEndEpochDay = endDay,
             legs = normalized,
             skipHubMenu = skipHub,
             stops = stops,
@@ -1220,7 +1264,20 @@ private fun TravelSetupScreen(
             }
         }
         onJobUpdated(job)
-        scope.launch { store.saveDownloadJob(job) }
+        scope.launch {
+            val normalized = normalizeLegDates(legs.toList(), tripPeriodStart, tripPeriodEnd)
+            store.saveConfig(
+                store.loadConfig().copy(
+                    destinationCountry = destCountry,
+                    arrivalAirport = arrivalAirport,
+                    tripStartEpochDay = tripPeriodStart,
+                    tripEndEpochDay = tripPeriodEnd,
+                    legs = normalized,
+                    skipHubMenu = skipHub,
+                ),
+            )
+            store.saveDownloadJob(job)
+        }
         RegionDownloadForegroundService.start(context, job)
     }
 
@@ -1322,30 +1379,49 @@ private fun TravelSetupScreen(
                             color = AppMenuStyle.muted,
                         )
                     }
-                    CountryAutocompleteField(
-                        destCountry,
-                        destCountryCode,
-                        { destCountry = it; scheduleLocked = false },
-                        { c ->
-                            destCountryCode = c?.code
+                    TripOverviewPanel(
+                        arrivalAirport = arrivalAirport,
+                        onAirportChange = { p ->
+                            arrivalAirport = p
+                            scheduleLocked = false
+                            scope.launch {
+                                runCatching { geocoder.reverse(p.lat, p.lon) }.getOrNull()?.let { geo ->
+                                    val hint = geo.adminParts.lastOrNull()
+                                        ?: geo.displayName.split(",").lastOrNull()?.trim().orEmpty()
+                                    catalog.resolveCountry(hint)?.nameKo?.takeIf { it.isNotBlank() }?.let {
+                                        destCountry = it
+                                    }
+                                }
+                            }
+                        },
+                        tripStartEpochDay = tripPeriodStart,
+                        tripEndEpochDay = tripPeriodEnd,
+                        onTripStartChange = {
+                            tripPeriodStart = it
                             scheduleLocked = false
                         },
-                        catalog,
-                        "여행국",
-                        placeholder = travelCountryPlaceholder,
+                        onTripEndChange = {
+                            tripPeriodEnd = it
+                            scheduleLocked = false
+                        },
+                        catalog = catalog,
+                        geocoder = geocoder,
+                        modifier = Modifier.padding(top = 8.dp),
                     )
                     if (destCountry.isNotBlank()) {
-                        catalog.resolveCountry(destCountry)?.let { c ->
-                            Text(
-                                "${c.nameKo} · ${c.capital}",
-                                style = MaterialTheme.typography.labelSmall,
-                                color = AppMenuStyle.muted,
-                            )
-                        }
+                        Text(
+                            "여행국: $destCountry",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = AppMenuStyle.muted,
+                            modifier = Modifier.padding(top = 4.dp),
+                        )
                     }
-                    Spacer(Modifier.height(8.dp))
+                    Spacer(Modifier.height(10.dp))
                     ScheduleLegsVerticalList(
                         legs = legs,
+                        tripYear = tripYearFromEpoch(tripPeriodStart),
+                        tripStartBound = tripPeriodStart,
+                        tripEndBound = tripPeriodEnd,
                         destCountry = destCountry,
                         catalog = catalog,
                         geocoder = geocoder,
@@ -1354,20 +1430,39 @@ private fun TravelSetupScreen(
                             scheduleLocked = false
                         },
                         onAddLeg = {
-                            legs.add(defaultScheduleLeg(store.newLegId()))
+                            legs.add(
+                                defaultScheduleLeg(store.newLegId()).copy(
+                                    startEpochDay = tripPeriodStart,
+                                    endEpochDay = tripPeriodEnd,
+                                ),
+                            )
                             scheduleLocked = false
                         },
                         onDeleteLeg = { idx -> legToDelete = idx },
                         modifier = Modifier.weight(1f),
                         cityPlaceholder = travelCityPlaceholder,
                     )
+                    val airportReady = arrivalAirport.confirmed && arrivalAirport.name.isNotBlank()
+                    val tripDatesReady = tripPeriodStart > 0 && tripPeriodEnd >= tripPeriodStart
                     val allLegsReady = legs.isNotEmpty() && legs.all { isLegReady(it) && it.legConfirmed }
                     MenuPrimaryButton(
                         text = "일정 전체 확정 → 다음",
-                        enabled = allLegsReady,
+                        enabled = airportReady && tripDatesReady && allLegsReady,
                         onClick = {
+                            if (!airportReady) {
+                                error = "입국 공항을 확인해 주세요."
+                                return@MenuPrimaryButton
+                            }
+                            if (!tripDatesReady) {
+                                error = "여행 기간(출발·귀국일)을 선택해 주세요."
+                                return@MenuPrimaryButton
+                            }
+                            if (legs.isEmpty()) {
+                                error = "「구간 추가」로 도보 구간을 하나 이상 넣어 주세요."
+                                return@MenuPrimaryButton
+                            }
                             if (!allLegsReady) {
-                                error = "모든 일정에서 출발·도착 확인 후 「이 일정 확정」을 눌러 주세요."
+                                error = "모든 구간에서 출발·도착 확인 후 「이 구간 확정」을 눌러 주세요."
                                 return@MenuPrimaryButton
                             }
                             scheduleLocked = true
@@ -1569,15 +1664,12 @@ private fun TravelSetupScreen(
     legToDelete?.let { idx ->
         AlertDialog(
             onDismissRequest = { legToDelete = null },
-            title = { Text("일정 삭제") },
-            text = { Text("일정 ${idx + 1}을(를) 삭제할까요?") },
+            title = { Text("구간 삭제") },
+            text = { Text("구간 ${idx + 1}을(를) 삭제할까요?") },
             confirmButton = {
                 TextButton(onClick = {
                     if (idx in legs.indices) {
                         legs.removeAt(idx)
-                        if (legs.isEmpty()) {
-                            legs.add(defaultScheduleLeg(store.newLegId()))
-                        }
                     }
                     scheduleLocked = false
                     legToDelete = null

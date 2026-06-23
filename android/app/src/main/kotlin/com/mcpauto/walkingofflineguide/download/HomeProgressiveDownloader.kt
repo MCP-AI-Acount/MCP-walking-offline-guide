@@ -144,9 +144,15 @@ class HomeProgressiveDownloader(
         }
     }
 
-    private suspend fun ensureRoutingGraph(lat: Double, lon: Double, regionDir: File): Boolean {
+    private suspend fun ensureRoutingGraph(
+        lat: Double,
+        lon: Double,
+        regionDir: File,
+        force: Boolean = false,
+    ): Boolean {
         val graphFile = File(regionDir, "routing_graph.json")
-        if (graphFile.exists() && graphFile.length() > 32) return true
+        if (!force && graphFile.exists() && graphFile.length() > 32) return true
+        if (force && graphFile.exists()) graphFile.delete()
         coroutineContext.ensureActive()
         if (cancelled) throw CancellationException("home download cancelled")
         return runCatching {
@@ -163,6 +169,11 @@ class HomeProgressiveDownloader(
     suspend fun ensureRoutingGraphForPosition(lat: Double, lon: Double): Boolean = withContext(Dispatchers.IO) {
         val dir = regionDir().also { it.mkdirs() }
         ensureRoutingGraph(lat, lon, dir)
+    }
+
+    suspend fun forceRebuildRoutingGraphForPosition(lat: Double, lon: Double): Boolean = withContext(Dispatchers.IO) {
+        val dir = regionDir().also { it.mkdirs() }
+        ensureRoutingGraph(lat, lon, dir, force = true)
     }
 
     private suspend fun ensureRegionRecord(lat: Double, lon: Double, homeCountryLabel: String) {
@@ -227,6 +238,9 @@ class HomeProgressiveDownloader(
         /** GPS 주변 도보 경로 그래프만 즉시 확보 (타일 다운로드와 분리) */
         suspend fun ensureRoutingGraphAt(context: Context, lat: Double, lon: Double): Boolean =
             HomeProgressiveDownloader(context).ensureRoutingGraphForPosition(lat, lon)
+
+        suspend fun forceRebuildRoutingGraphAt(context: Context, lat: Double, lon: Double): Boolean =
+            HomeProgressiveDownloader(context).forceRebuildRoutingGraphForPosition(lat, lon)
 
         suspend fun runIfNeeded(
             context: Context,
