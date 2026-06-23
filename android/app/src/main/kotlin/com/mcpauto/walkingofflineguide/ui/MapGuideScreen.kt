@@ -16,6 +16,9 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.layout.wrapContentSize
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
@@ -59,6 +62,7 @@ import androidx.compose.ui.zIndex
 import java.util.Locale
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.graphics.Shadow
@@ -66,6 +70,7 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.IntSize
+import androidx.compose.ui.unit.DpOffset
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import com.mcpauto.walkingofflineguide.data.Bbox
@@ -100,8 +105,8 @@ import com.mcpauto.walkingofflineguide.network.adminCityLabel
 import com.mcpauto.walkingofflineguide.network.WifiGate
 import com.mcpauto.walkingofflineguide.network.OnlineTileProvider
 import com.mcpauto.walkingofflineguide.util.HomeLanguage
-import com.mcpauto.walkingofflineguide.util.countryFlagEmoji
 import com.mcpauto.walkingofflineguide.util.MapUiStrings
+import com.mcpauto.walkingofflineguide.util.countryFlagEmoji
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
@@ -186,7 +191,6 @@ fun MapGuideScreen(
     var showRestaurant by remember { mutableStateOf(config.showRestaurant) }
     var showHotel by remember { mutableStateOf(config.showHotel) }
     var minStarFilter by remember { mutableStateOf(0f) }
-    var starMenuExpanded by remember { mutableStateOf(false) }
     var followGps by remember { mutableStateOf(false) }
     /** 오른쪽 위 크로스헤어 — GPS 현재 위치 화면 중앙 고정 */
     var gpsLocked by remember(region.id) { mutableStateOf(true) }
@@ -894,74 +898,47 @@ fun MapGuideScreen(
                     .padding(start = 6.dp, end = 6.dp),
             ) {
                 Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .horizontalScroll(rememberScrollState()),
-                    horizontalArrangement = Arrangement.spacedBy(4.dp),
+                    modifier = Modifier.fillMaxWidth(),
                     verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(4.dp),
                 ) {
-                    FilterChip(
-                        selected = showRestaurant,
-                        onClick = { showRestaurant = !showRestaurant },
-                        label = { Text(ui.restaurant, style = MaterialTheme.typography.labelSmall) },
-                        colors = FilterChipDefaults.filterChipColors(
-                            selectedContainerColor = PoiColors.restaurant.copy(alpha = 0.25f),
-                        ),
-                    )
-                    FilterChip(
-                        selected = showHotel,
-                        onClick = { showHotel = !showHotel },
-                        label = { Text(ui.hotel, style = MaterialTheme.typography.labelSmall) },
-                        colors = FilterChipDefaults.filterChipColors(
-                            selectedContainerColor = PoiColors.hotel.copy(alpha = 0.25f),
-                        ),
-                    )
-                    FilterChip(
-                        selected = showSightseeing,
-                        onClick = { showSightseeing = !showSightseeing },
-                        label = { Text(ui.sight, style = MaterialTheme.typography.labelSmall) },
-                        colors = FilterChipDefaults.filterChipColors(
-                            selectedContainerColor = PoiColors.sight.copy(alpha = 0.25f),
-                        ),
-                    )
-                    Box {
-                        val starLabel = when (minStarFilter) {
-                            0f -> ui.recommendFilter
-                            4.5f -> "${ui.recommendFilter} 4.5+"
-                            else -> "${ui.recommendFilter} ${minStarFilter.toInt()}+"
-                        }
+                    Row(
+                        modifier = Modifier
+                            .weight(1f)
+                            .horizontalScroll(rememberScrollState()),
+                        horizontalArrangement = Arrangement.spacedBy(4.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
                         FilterChip(
-                            selected = minStarFilter > 0f,
-                            onClick = { starMenuExpanded = true },
-                            label = { Text(starLabel, style = MaterialTheme.typography.labelSmall) },
-                            trailingIcon = {
-                                Icon(
-                                    Icons.Default.ArrowDropDown,
-                                    contentDescription = null,
-                                    modifier = Modifier.size(16.dp),
-                                )
-                            },
+                            selected = showRestaurant,
+                            onClick = { showRestaurant = !showRestaurant },
+                            label = { Text(ui.restaurant, style = MaterialTheme.typography.labelSmall) },
+                            colors = FilterChipDefaults.filterChipColors(
+                                selectedContainerColor = PoiColors.restaurant.copy(alpha = 0.25f),
+                            ),
                         )
-                        DropdownMenu(
-                            expanded = starMenuExpanded,
-                            onDismissRequest = { starMenuExpanded = false },
-                        ) {
-                            listOf(
-                                0f to ui.starAll,
-                                3f to "${ui.recommendFilter} 3+",
-                                4f to "${ui.recommendFilter} 4+",
-                                4.5f to "${ui.recommendFilter} 4.5+",
-                            ).forEach { (v, label) ->
-                                DropdownMenuItem(
-                                    text = { Text(label, style = MaterialTheme.typography.labelSmall) },
-                                    onClick = {
-                                        minStarFilter = v
-                                        starMenuExpanded = false
-                                    },
-                                )
-                            }
-                        }
+                        FilterChip(
+                            selected = showHotel,
+                            onClick = { showHotel = !showHotel },
+                            label = { Text(ui.hotel, style = MaterialTheme.typography.labelSmall) },
+                            colors = FilterChipDefaults.filterChipColors(
+                                selectedContainerColor = PoiColors.hotel.copy(alpha = 0.25f),
+                            ),
+                        )
+                        FilterChip(
+                            selected = showSightseeing,
+                            onClick = { showSightseeing = !showSightseeing },
+                            label = { Text(ui.sight, style = MaterialTheme.typography.labelSmall) },
+                            colors = FilterChipDefaults.filterChipColors(
+                                selectedContainerColor = PoiColors.sight.copy(alpha = 0.25f),
+                            ),
+                        )
                     }
+                    RecommendDegreeDropdown(
+                        minStarFilter = minStarFilter,
+                        onFilterChange = { minStarFilter = it },
+                        ui = ui,
+                    )
                 }
                 if (!onSite && !homeLive) {
                     Text(
@@ -1001,6 +978,79 @@ fun MapGuideScreen(
                         }
                     }
                 }
+            }
+        }
+    }
+}
+
+/** 추천도 — 팝업만 아래로, 칩 오른쪽 정렬·메뉴는 왼쪽으로 확장 */
+@Composable
+private fun RecommendDegreeDropdown(
+    minStarFilter: Float,
+    onFilterChange: (Float) -> Unit,
+    ui: MapUiStrings,
+) {
+    var expanded by remember { mutableStateOf(false) }
+    var chipSize by remember { mutableStateOf(IntSize.Zero) }
+    val density = LocalDensity.current
+    val menuWidth = 172.dp
+
+    val label = when (minStarFilter) {
+        0f -> ui.recommendFilter
+        4.5f -> "${ui.recommendFilter} 4.5+"
+        else -> "${ui.recommendFilter} ${minStarFilter.toInt()}+"
+    }
+
+    Box(
+        modifier = Modifier.wrapContentSize(Alignment.TopEnd),
+        contentAlignment = Alignment.TopEnd,
+    ) {
+        FilterChip(
+            selected = false,
+            onClick = { expanded = true },
+            label = {
+                Text(label, style = MaterialTheme.typography.labelSmall, maxLines = 1)
+            },
+            trailingIcon = {
+                Icon(
+                    Icons.Default.ArrowDropDown,
+                    contentDescription = null,
+                    modifier = Modifier.size(16.dp),
+                )
+            },
+            modifier = Modifier
+                .onSizeChanged { chipSize = it }
+                .widthIn(min = 76.dp),
+            colors = FilterChipDefaults.filterChipColors(
+                containerColor = if (minStarFilter > 0f) {
+                    Color(0xFFD1FAE5)
+                } else {
+                    Color(0xFFE8F2FC)
+                },
+            ),
+        )
+        val menuOffsetX = with(density) {
+            chipSize.width.toDp() - menuWidth
+        }
+        DropdownMenu(
+            expanded = expanded,
+            onDismissRequest = { expanded = false },
+            modifier = Modifier.width(menuWidth),
+            offset = DpOffset(x = menuOffsetX, y = 0.dp),
+        ) {
+            listOf(
+                0f to ui.starAll,
+                3f to "${ui.recommendFilter} 3+",
+                4f to "${ui.recommendFilter} 4+",
+                4.5f to "${ui.recommendFilter} 4.5+",
+            ).forEach { (value, itemLabel) ->
+                DropdownMenuItem(
+                    text = { Text(itemLabel, style = MaterialTheme.typography.labelSmall) },
+                    onClick = {
+                        onFilterChange(value)
+                        expanded = false
+                    },
+                )
             }
         }
     }
