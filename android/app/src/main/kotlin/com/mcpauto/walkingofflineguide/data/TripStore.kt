@@ -52,11 +52,6 @@ class TripStore(private val context: Context) {
         File(regionsDir, id).deleteRecursively()
     }
 
-    suspend fun deleteAllMapData() = withContext(Dispatchers.IO) {
-        regionsDir.listFiles()?.forEach { it.deleteRecursively() }
-        regionsDir.mkdirs()
-    }
-
     fun todayLegIndex(config: TripConfig): Int? {
         if (config.tripStartEpochDay <= 0L) return null
         val today = LocalDate.now().toEpochDay()
@@ -90,6 +85,60 @@ class TripStore(private val context: Context) {
 
     fun newLegId(): String = UUID.randomUUID().toString().take(8)
 
+    suspend fun deleteAllMapData() = withContext(Dispatchers.IO) {
+        regionsDir.listFiles()?.forEach { it.deleteRecursively() }
+        regionsDir.mkdirs()
+        clearDownloadJob()
+    }
+
+    private val downloadJobFile get() = File(root, "download_job.json")
+
+    suspend fun loadDownloadJob(): DownloadJobState? = withContext(Dispatchers.IO) {
+        if (!downloadJobFile.exists()) return@withContext null
+        runCatching {
+            json.decodeFromString<DownloadJobState>(downloadJobFile.readText())
+        }.getOrNull()?.takeIf { it.active }
+    }
+
+    suspend fun saveDownloadJob(job: DownloadJobState) = withContext(Dispatchers.IO) {
+        downloadJobFile.writeText(json.encodeToString(job))
+    }
+
+    suspend fun clearDownloadJob() = withContext(Dispatchers.IO) {
+        downloadJobFile.delete()
+    }
+
+    suspend fun findRegionIdForCity(cityName: String): String? = withContext(Dispatchers.IO) {
+        loadRegions().firstOrNull {
+            it.cityName.equals(cityName, ignoreCase = true)
+        }?.id
+    }
+
+    /** 여행기간 중 메뉴 건너뛰기 → 오늘 일정 도시 또는 첫 다운로드 지역 */
+    fun resolveAutoMapRegion(config: TripConfig, regions: List<RegionRecord>): RegionRecord? {
+        val completed = regions.filter { it.downloadComplete }
+        if (completed.isEmpty()) return null
+        val idx = todayLegIndex(config)
+        if (idx != null) {
+            val leg = config.legs.getOrNull(idx) ?: return completed.firstOrNull()
+            val names = buildList {
+                if (leg.startPoint.confirmed) add(leg.startPoint.name)
+                addAll(leg.waypoints.filter { it.confirmed }.map { it.name })
+                if (leg.endPoint.confirmed) add(leg.endPoint.name)
+            }
+            for (name in names) {
+                completed.find {
+                    it.cityName.equals(name, ignoreCase = true) || it.cityName.contains(name, ignoreCase = true)
+                }?.let { return it }
+            }
+        }
+        return completed.firstOrNull()
+    }
+
     fun newRegionId(city: String): String =
         city.lowercase().replace(Regex("[^a-z0-9가-힣]+"), "_").take(24) + "_" + System.currentTimeMillis().toString(36)
+
+    /** 같은 도시 재다운로드·이어받기 시 기존 ID 재사용 */
+    fun stableRegionId(city: String, existingId: String?): String =
+        existingId ?: newRegionId(city)
 }

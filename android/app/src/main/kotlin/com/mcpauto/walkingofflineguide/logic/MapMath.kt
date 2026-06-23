@@ -3,6 +3,9 @@ package com.mcpauto.walkingofflineguide.logic
 import com.mcpauto.walkingofflineguide.data.Bbox
 import com.mcpauto.walkingofflineguide.data.Poi
 import com.mcpauto.walkingofflineguide.data.PoiBundle
+import com.mcpauto.walkingofflineguide.data.RegionRecord
+import com.mcpauto.walkingofflineguide.data.STOP_DOWNLOAD_RADIUS_KM
+import com.mcpauto.walkingofflineguide.data.TripConfig
 import com.mcpauto.walkingofflineguide.data.UserPosition
 import kotlin.math.asinh
 import kotlin.math.atan
@@ -93,5 +96,72 @@ object MapMath {
         east = inner.east.coerceAtMost(outer.east),
     )
 
-    const val FOREIGN_RADIUS_KM = 12.0
+    /**
+     * 타일·온라인만 원거리 차단 — GPS 중심 반경 뷰는 유지.
+     * 행정지역 경계 클립 아님(가장자리 맵 잘림 방지).
+     */
+    fun resolveDistantTileClipBbox(
+        config: TripConfig,
+        region: RegionRecord,
+        gpsLat: Double?,
+        gpsLon: Double?,
+        visibleSpanM: Double = MapCameraMath.SPAN_HEADING_DEFAULT_M,
+    ): Bbox? {
+        if (gpsLat == null || gpsLon == null) return null
+        if (TripNavigation.isAtHomeCountry(config, gpsLat, gpsLon)) {
+            if (TripNavigation.isInKorea(gpsLat, gpsLon)) {
+                return Bbox(south = 33.0, west = 124.5, north = 39.5, east = 132.0)
+            }
+            val homeRadiusKm = maxOf(40.0, visibleSpanM / 1000.0 * 12.0)
+            return PoiLogic.bboxAround(gpsLat, gpsLon, homeRadiusKm)
+        }
+        val padKm = maxOf(20.0, visibleSpanM / 1000.0 * 5.0)
+        val base = region.bbox.takeIf { MapCameraMath.bboxIsValid(it) }
+            ?: PoiLogic.bboxAround(region.lat, region.lon, STOP_DOWNLOAD_RADIUS_KM)
+        return expandBbox(base, padKm, region.lat)
+    }
+
+    private fun expandBbox(bbox: Bbox, padKm: Double, centerLat: Double): Bbox {
+        val dLat = padKm / 111.0
+        val dLon = padKm / (111.0 * cos(Math.toRadians(centerLat)).coerceAtLeast(0.01))
+        return Bbox(
+            south = bbox.south - dLat,
+            north = bbox.north + dLat,
+            west = bbox.west - dLon,
+            east = bbox.east + dLon,
+        )
+    }
+
+    /** @deprecated 행정지역 경계 클립 — [resolveDistantTileClipBbox] 사용 */
+    @Deprecated("Use resolveDistantTileClipBbox", ReplaceWith("resolveDistantTileClipBbox(config, region, gpsLat, gpsLon)"))
+    fun resolveActiveRegionClipBbox(
+        bundle: PoiBundle,
+        region: RegionRecord,
+        config: TripConfig,
+        allRegions: List<RegionRecord>,
+        adminCityLabel: String? = null,
+        gpsLat: Double? = null,
+        gpsLon: Double? = null,
+    ): Bbox? = resolveDistantTileClipBbox(config, region, gpsLat, gpsLon)
+
+    /** 레이더 POI 반경(m) — 0=OFF · 탭마다 순환 */
+    val RADAR_RADIUS_STEPS_M = listOf(0, 100, 200, 500, 1000)
+
+    fun nextRadarRadiusM(currentM: Int): Int {
+        val idx = RADAR_RADIUS_STEPS_M.indexOf(currentM)
+        return if (idx < 0) {
+            RADAR_RADIUS_STEPS_M.first()
+        } else {
+            RADAR_RADIUS_STEPS_M[(idx + 1) % RADAR_RADIUS_STEPS_M.size]
+        }
+    }
+
+    fun radarRadiusKm(radiusM: Int): Double = radiusM / 1000.0
+
+    /** POI fetch 상한(km) — 레이더 최대 */
+    const val POI_USER_RADIUS_KM = 1.0
+    /** 미리보기·일반 지도 (GPS 없음) */
+    const val POI_VIEW_RADIUS_KM = 4.0
+    @Deprecated("Use POI_VIEW_RADIUS_KM", ReplaceWith("POI_VIEW_RADIUS_KM"))
+    const val FOREIGN_RADIUS_KM = POI_VIEW_RADIUS_KM
 }

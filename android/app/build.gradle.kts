@@ -13,8 +13,8 @@ android {
         applicationId = "com.mcpauto.walkingofflineguide"
         minSdk = 26
         targetSdk = 35
-        versionCode = 3
-        versionName = "1.0.2"
+        versionCode = 110
+        versionName = "1.1.0"
     }
 
     buildTypes {
@@ -44,6 +44,7 @@ android {
 dependencies {
     val composeBom = platform("androidx.compose:compose-bom:2024.12.01")
     implementation(composeBom)
+    implementation("androidx.core:core-ktx:1.15.0")
     implementation("androidx.activity:activity-compose:1.9.3")
     implementation("androidx.compose.ui:ui")
     implementation("androidx.compose.ui:ui-tooling-preview")

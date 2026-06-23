@@ -41,6 +41,7 @@ object PoiLogic {
     }
 
     fun withinRadiusKm(pois: List<Poi>, lat: Double?, lon: Double?, radiusKm: Double): List<Poi> {
+        if (radiusKm <= 0.0) return emptyList()
         if (lat == null || lon == null) return pois
         val maxM = radiusKm * 1000.0
         return pois.filter { haversineM(lat, lon, it.lat, it.lon) <= maxM }

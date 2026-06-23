@@ -16,7 +16,7 @@ class OverpassClient {
         .readTimeout(60, TimeUnit.SECONDS)
         .build()
 
-    suspend fun fetchPois(bbox: Bbox): List<Poi> = withContext(Dispatchers.IO) {
+    suspend fun fetchPois(bbox: Bbox, homeLangTag: String = "ko"): List<Poi> = withContext(Dispatchers.IO) {
         val q = """
             [out:json][timeout:45];
             (
@@ -39,11 +39,11 @@ class OverpassClient {
             .build()
         client.newCall(req).execute().use { resp ->
             if (!resp.isSuccessful) return@withContext emptyList()
-            parseElements(JSONObject(resp.body?.string().orEmpty()))
+            parseElements(JSONObject(resp.body?.string().orEmpty()), homeLangTag)
         }
     }
 
-    private fun parseElements(json: JSONObject): List<Poi> {
+    private fun parseElements(json: JSONObject, homeLangTag: String): List<Poi> {
         val arr = json.optJSONArray("elements") ?: return emptyList()
         val out = mutableListOf<Poi>()
         for (i in 0 until arr.length()) {
@@ -59,18 +59,38 @@ class OverpassClient {
             }
             if (lat.isNaN() || lon.isNaN()) continue
             val (kind, tourism) = classify(tags)
-            val name = listOf(
-                tags.optString("name:ko"),
+            val localName = listOf(
                 tags.optString("name"),
                 tags.optString("brand"),
+                tags.optString("name:en"),
             ).firstOrNull { it.isNotBlank() } ?: continue
+            val homeTag = "name:$homeLangTag"
+            val altHomeTag = when (homeLangTag) {
+                "zh-TW" -> "name:zh-Hant"
+                "zh", "zh-CN" -> "name:zh"
+                else -> homeTag
+            }
+            val nameHome = listOf(
+                tags.optString(homeTag),
+                tags.optString(altHomeTag),
+            ).firstOrNull { it.isNotBlank() }
+            val descLocal = tags.optString("description").ifBlank { null }
+                ?: tags.optString("description:$homeLangTag").ifBlank { null }
             out += Poi(
                 id = "${el.optString("type")}/${el.optLong("id")}",
                 kind = kind,
-                nameKo = name,
+                nameKo = localName,
+                nameHome = nameHome,
                 lat = lat,
                 lon = lon,
-                descriptionKo = tags.optString("description").ifBlank { null },
+                descriptionKo = descLocal,
+                descriptionHome = if (nameHome != null && descLocal != null &&
+                    tags.optString("description:$homeLangTag").isNotBlank()
+                ) {
+                    tags.optString("description:$homeLangTag")
+                } else {
+                    null
+                },
                 tourism = tourism,
             )
         }

@@ -20,6 +20,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.foundation.BorderStroke
 import com.mcpauto.walkingofflineguide.data.Poi
@@ -47,8 +48,12 @@ fun StarRating(rating: Float, modifier: Modifier = Modifier) {
 @Composable
 fun PoiListItem(
     poi: Poi,
+    displayName: String,
+    description: String?,
     accent: Color,
     typeLabel: String,
+    routePrefix: String,
+    speakLabel: String,
     selected: Boolean = false,
     routeDistanceM: Int? = null,
     onClick: () -> Unit = {},
@@ -69,18 +74,34 @@ fun PoiListItem(
         shape = RoundedCornerShape(10.dp),
         colors = CardDefaults.cardColors(containerColor = Color.White),
     ) {
-        Row(modifier = Modifier.padding(horizontal = 8.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+        Row(modifier = Modifier.padding(horizontal = 8.dp, vertical = 6.dp), verticalAlignment = Alignment.Top) {
             Column(modifier = Modifier.weight(1f)) {
                 Text(typeLabel, color = accent, style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold)
-                Text(poi.nameKo, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold, maxLines = 2)
+                Text(
+                    displayName,
+                    style = MaterialTheme.typography.bodyMedium,
+                    fontWeight = FontWeight.SemiBold,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                if (!description.isNullOrBlank()) {
+                    Text(
+                        description,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = Color(0xFF475569),
+                        maxLines = 3,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.padding(top = 4.dp),
+                    )
+                }
                 StarRating(PoiLogic.displayRating(poi), modifier = Modifier.padding(top = 2.dp))
                 poi.distanceM?.let { Text(formatDistance(it), color = accent, style = MaterialTheme.typography.labelSmall) }
                 routeDistanceM?.let {
-                    Text("경로 ${formatDistance(it)}", color = Color(0xFF2563EB), style = MaterialTheme.typography.labelSmall)
+                    Text("$routePrefix ${formatDistance(it)}", color = Color(0xFF2563EB), style = MaterialTheme.typography.labelSmall)
                 }
             }
             IconButton(onClick = onSpeak) {
-                Icon(Icons.Default.VolumeUp, contentDescription = "읽기", tint = accent)
+                Icon(Icons.Default.VolumeUp, contentDescription = speakLabel, tint = accent)
             }
         }
     }

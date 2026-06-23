@@ -2,6 +2,7 @@ package com.mcpauto.walkingofflineguide.data
 
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
+import java.time.LocalDate
 
 @Serializable
 data class PoiBundle(
@@ -25,9 +26,11 @@ data class Poi(
     val id: String,
     val kind: String = "attraction",
     @SerialName("name_ko") val nameKo: String,
+    @SerialName("name_home") val nameHome: String? = null,
     val lat: Double,
     val lon: Double,
     @SerialName("description_ko") val descriptionKo: String? = null,
+    @SerialName("description_home") val descriptionHome: String? = null,
     @SerialName("distance_m") val distanceM: Int? = null,
     val tourism: String? = null,
     val rating: Float? = null,
@@ -38,12 +41,17 @@ data class CityStop(
     val name: String,
     val lat: Double = 0.0,
     val lon: Double = 0.0,
-    @SerialName("radius_km") val radiusKm: Double = 15.0,
+    /** 출발·경유·도착 각 지점 주변 오프라인 다운로드 반경 */
+    @SerialName("radius_km") val radiusKm: Double = STOP_DOWNLOAD_RADIUS_KM,
 )
+
+/** 출발지·경유지·도착지 공통 — 지점 중심 반경(km) */
+const val STOP_DOWNLOAD_RADIUS_KM = 5.0
 
 @Serializable
 data class TripConfig(
     @SerialName("home_country") val homeCountry: String = "",
+    @SerialName("home_country_code") val homeCountryCode: String = "",
     @SerialName("home_lat") val homeLat: Double = 0.0,
     @SerialName("home_lon") val homeLon: Double = 0.0,
     @SerialName("destination_country") val destinationCountry: String = "",
@@ -56,6 +64,7 @@ data class TripConfig(
     @SerialName("auto_delete_after_trip") val autoDeleteAfterTrip: Boolean = false,
     @SerialName("manual_delete_prompt") val manualDeletePrompt: Boolean = true,
     @SerialName("skip_hub_menu") val skipHubMenu: Boolean = false,
+    @SerialName("basic_setup_complete") val basicSetupComplete: Boolean = false,
     @SerialName("setup_complete") val setupComplete: Boolean = false,
 )
 
@@ -83,3 +92,10 @@ data class UserPosition(
 )
 
 enum class DeleteMode { AUTO_AFTER_TRIP, MANUAL_PROMPT, KEEP }
+
+fun TripConfig.isInTripPeriod(): Boolean {
+    if (tripStartEpochDay <= 0L) return false
+    val today = LocalDate.now().toEpochDay()
+    val end = if (tripEndEpochDay >= tripStartEpochDay) tripEndEpochDay else tripStartEpochDay + 30
+    return today in tripStartEpochDay..end
+}

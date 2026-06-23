@@ -1,20 +1,24 @@
 package com.mcpauto.walkingofflineguide.ui
 
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -22,6 +26,7 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -29,14 +34,103 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import com.mcpauto.walkingofflineguide.data.CityPoint
+import com.mcpauto.walkingofflineguide.data.CountryEntry
 import com.mcpauto.walkingofflineguide.data.GeoCatalog
 import com.mcpauto.walkingofflineguide.data.ScheduleLeg
+import com.mcpauto.walkingofflineguide.network.GeoResult
 import com.mcpauto.walkingofflineguide.network.NominatimGeocoder
+import com.mcpauto.walkingofflineguide.util.countryFlagEmoji
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+
+private val SuggestionRowHeight = 48.dp
+private const val SuggestionMaxVisibleRows = 6
+
+/** U3-Autocomplete — 입력·드롭다운·스크롤 한 세트. @see UX_CONVENIENCE_CANON.md § U3-Autocomplete */
+@Composable
+private fun <T> GeoSuggestionDropdownList(
+    items: List<T>,
+    modifier: Modifier = Modifier,
+    textColor: Color = MaterialTheme.colorScheme.onSurface,
+    label: (T) -> String,
+    onItemClick: (T) -> Unit,
+) {
+    if (items.isEmpty()) return
+    val visibleRows = minOf(items.size, SuggestionMaxVisibleRows).coerceAtLeast(1)
+    val listHeight = SuggestionRowHeight * visibleRows
+    val listState = rememberLazyListState()
+    val canScroll = items.size > SuggestionMaxVisibleRows
+
+    Column(modifier.fillMaxWidth()) {
+        Card(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(top = 4.dp),
+            colors = CardDefaults.cardColors(containerColor = Color(0xFFF8FAFC)),
+            elevation = CardDefaults.cardElevation(defaultElevation = 2.dp),
+            border = BorderStroke(1.dp, Color(0xFFCBD5E1)),
+        ) {
+            LazyColumn(
+                state = listState,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(listHeight),
+            ) {
+                itemsIndexed(items) { index, item ->
+                    if (index > 0) {
+                        HorizontalDivider(color = Color(0xFFE2E8F0), thickness = 1.dp)
+                    }
+                    GeoSuggestionRow(
+                        text = label(item),
+                        onClick = { onItemClick(item) },
+                        textColor = textColor,
+                    )
+                }
+            }
+        }
+        if (canScroll) {
+            Text(
+                "${items.size}개 — 아래로 스크롤",
+                style = MaterialTheme.typography.labelSmall,
+                color = Color(0xFF64748B),
+                modifier = Modifier.padding(top = 4.dp, start = 4.dp),
+            )
+        }
+    }
+}
+
+@Composable
+private fun GeoSuggestionRow(
+    text: String,
+    onClick: () -> Unit,
+    textColor: Color = MaterialTheme.colorScheme.onSurface,
+) {
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(SuggestionRowHeight)
+            .clickable(onClick = onClick)
+            .padding(horizontal = 12.dp),
+        contentAlignment = Alignment.CenterStart,
+    ) {
+        Text(
+            text,
+            style = MaterialTheme.typography.bodyMedium,
+            color = textColor,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
+    }
+}
 
 fun formatDateDigitsInput(raw: String): String {
     val digits = raw.filter { it.isDigit() }.take(8)
@@ -51,12 +145,13 @@ fun formatDateDigitsInput(raw: String): String {
 fun DateMaskField(
     value: String,
     onValueChange: (String) -> Unit,
+    label: String,
     modifier: Modifier = Modifier,
 ) {
     OutlinedTextField(
         value = value,
         onValueChange = { onValueChange(formatDateDigitsInput(it)) },
-        label = { Text("시작일") },
+        label = { Text(label) },
         placeholder = { Text("2026-06-25") },
         modifier = modifier.fillMaxWidth(),
         singleLine = true,
@@ -64,56 +159,53 @@ fun DateMaskField(
 }
 
 @Composable
+/** U3-Autocomplete — 터치 후 수정 + 드롭다운·스크롤 한 세트. @see UX_CONVENIENCE_CANON.md § U3-Autocomplete */
 fun CountryAutocompleteField(
     value: String,
+    confirmedCode: String?,
     onValueChange: (String) -> Unit,
+    onCountryConfirmed: (CountryEntry?) -> Unit,
     catalog: GeoCatalog,
     label: String,
     modifier: Modifier = Modifier,
 ) {
     var expanded by remember { mutableStateOf(false) }
     val suggestions = remember(value) { catalog.searchCountries(value) }
+    val flag = confirmedCode?.let { countryFlagEmoji(it) }
 
     Column(modifier.fillMaxWidth()) {
         OutlinedTextField(
             value = value,
             onValueChange = {
                 onValueChange(it)
+                onCountryConfirmed(null)
                 expanded = it.isNotBlank()
             },
             label = { Text(label) },
             modifier = Modifier.fillMaxWidth(),
             singleLine = true,
+            trailingIcon = {
+                if (flag != null) {
+                    Text(flag, fontSize = 22.sp, modifier = Modifier.padding(end = 8.dp))
+                }
+            },
         )
         if (expanded && suggestions.isNotEmpty()) {
-            Card(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(top = 4.dp)
-                    .heightIn(max = 160.dp),
-                colors = CardDefaults.cardColors(containerColor = Color(0xFFF8FAFC)),
-            ) {
-                Column(Modifier.verticalScroll(rememberScrollState())) {
-                    suggestions.forEach { c ->
-                        Text(
-                            "${c.nameKo} (${c.nameEn})",
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .clickable {
-                                    onValueChange(c.nameKo.ifBlank { c.nameEn })
-                                    expanded = false
-                                }
-                                .padding(horizontal = 12.dp, vertical = 10.dp),
-                            style = MaterialTheme.typography.bodyMedium,
-                        )
-                    }
-                }
-            }
+            GeoSuggestionDropdownList(
+                items = suggestions,
+                label = { c -> "${c.nameKo} (${c.nameEn})" },
+                onItemClick = { c ->
+                    onValueChange(c.nameKo.ifBlank { c.nameEn })
+                    onCountryConfirmed(c)
+                    expanded = false
+                },
+            )
         }
     }
 }
 
 @Composable
+/** U3-Autocomplete — 확정 후 입력창 탭으로 재편집 · 내장/온라인 목록은 GeoSuggestionDropdownList 한 세트. */
 fun CityConfirmField(
     point: CityPoint,
     onDraftChange: (String) -> Unit,
@@ -124,58 +216,128 @@ fun CityConfirmField(
     label: String,
 ) {
     val scope = rememberCoroutineScope()
+    val focusRequester = remember { FocusRequester() }
+    val keyboard = LocalSoftwareKeyboardController.current
+    var pendingEditFocus by remember { mutableStateOf(false) }
     var draft by remember(point.name, point.confirmed) { mutableStateOf(point.name) }
     var confirming by remember { mutableStateOf(false) }
     var err by remember { mutableStateOf("") }
-    val suggestions = remember(draft, countryHint, point.confirmed) {
+    var onlineSuggestions by remember { mutableStateOf<List<GeoResult>>(emptyList()) }
+    var searchingOnline by remember { mutableStateOf(false) }
+    val localSuggestions = remember(draft, countryHint, point.confirmed) {
         if (point.confirmed || draft.length < 1) emptyList() else catalog.searchCities(draft, countryHint)
     }
 
-    Column(Modifier.fillMaxWidth().padding(vertical = 6.dp)) {
-        OutlinedTextField(
-            value = if (point.confirmed) point.name else draft,
-            onValueChange = {
-                if (!point.confirmed) {
-                    draft = it
-                    onDraftChange(it)
-                }
-            },
-            label = { Text(if (point.confirmed) "✓ $label" else label) },
-            modifier = Modifier.fillMaxWidth(),
-            readOnly = point.confirmed,
-            singleLine = true,
-        )
+    LaunchedEffect(pendingEditFocus, point.confirmed) {
+        if (pendingEditFocus && !point.confirmed) {
+            pendingEditFocus = false
+            delay(80)
+            focusRequester.requestFocus()
+            keyboard?.show()
+        }
+    }
 
-        if (!point.confirmed && suggestions.isNotEmpty()) {
-            Column(
-                Modifier
+    fun beginEdit() {
+        draft = point.name
+        err = ""
+        pendingEditFocus = true
+        onConfirm(point.copy(confirmed = false))
+    }
+
+    LaunchedEffect(draft, countryHint, point.confirmed) {
+        onlineSuggestions = emptyList()
+        if (point.confirmed || draft.trim().length < 2) return@LaunchedEffect
+        delay(450)
+        searchingOnline = true
+        onlineSuggestions = runCatching {
+            geocoder.searchSuggestions(draft.trim(), countryHint, limit = 8)
+        }.getOrDefault(emptyList())
+        searchingOnline = false
+    }
+
+    fun applyGeoResult(geo: GeoResult) {
+        onConfirm(
+            CityPoint(
+                name = geo.displayName.split(",").take(2).joinToString(", ").ifBlank { geo.name },
+                lat = geo.lat,
+                lon = geo.lon,
+                confirmed = true,
+            ),
+        )
+        draft = geo.name
+    }
+
+    Column(Modifier.fillMaxWidth().padding(vertical = 6.dp)) {
+        Box(Modifier.fillMaxWidth()) {
+            OutlinedTextField(
+                value = if (point.confirmed) point.name else draft,
+                onValueChange = {
+                    if (!point.confirmed) {
+                        draft = it
+                        onDraftChange(it)
+                        err = ""
+                    }
+                },
+                label = {
+                    Text(if (point.confirmed) "✓ $label" else label)
+                },
+                placeholder = { Text("2글자 이상 — 도시·거리·장소 검색") },
+                modifier = Modifier
                     .fillMaxWidth()
-                    .padding(top = 4.dp)
-                    .heightIn(max = 120.dp)
-                    .verticalScroll(rememberScrollState()),
-            ) {
-                suggestions.take(8).forEach { c ->
-                    Text(
-                        "${c.name} · ${c.country}",
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clickable {
-                                draft = c.name
-                                onDraftChange(c.name)
-                            }
-                            .padding(vertical = 6.dp, horizontal = 4.dp),
-                        style = MaterialTheme.typography.bodySmall,
-                        color = Color(0xFF2563EB),
-                    )
-                }
+                    .focusRequester(focusRequester),
+                readOnly = point.confirmed,
+                singleLine = true,
+            )
+            if (point.confirmed) {
+                Box(
+                    Modifier
+                        .matchParentSize()
+                        .clickable { beginEdit() },
+                )
             }
         }
 
-        Row(
-            Modifier.fillMaxWidth().padding(top = 6.dp),
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-        ) {
-            if (!point.confirmed) {
+        if (!point.confirmed && localSuggestions.isNotEmpty()) {
+            Text(
+                "내장 목록",
+                style = MaterialTheme.typography.labelSmall,
+                color = Color.Gray,
+                modifier = Modifier.padding(top = 4.dp),
+            )
+            GeoSuggestionDropdownList(
+                items = localSuggestions,
+                textColor = Color(0xFF2563EB),
+                label = { c -> "${c.name} · ${c.country}" },
+                onItemClick = { c ->
+                    draft = c.name
+                    onDraftChange(c.name)
+                    onConfirm(CityPoint(name = c.name, lat = c.lat, lon = c.lon, confirmed = true))
+                },
+            )
+        }
+
+        if (!point.confirmed && (searchingOnline || onlineSuggestions.isNotEmpty())) {
+            Text(
+                if (searchingOnline) "인터넷 검색 중…" else "인터넷 검색",
+                style = MaterialTheme.typography.labelSmall,
+                color = Color.Gray,
+                modifier = Modifier.padding(top = 4.dp),
+            )
+            if (onlineSuggestions.isNotEmpty()) {
+                GeoSuggestionDropdownList(
+                    items = onlineSuggestions,
+                    textColor = Color(0xFF0F766E),
+                    label = { geo -> geo.displayName },
+                    onItemClick = { geo -> applyGeoResult(geo) },
+                )
+            }
+        }
+
+        if (!point.confirmed) {
+            Row(
+                Modifier.fillMaxWidth().padding(top = 6.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
                 Button(
                     onClick = {
                         scope.launch {
@@ -183,7 +345,7 @@ fun CityConfirmField(
                             err = ""
                             val name = draft.trim()
                             if (name.isBlank()) {
-                                err = "도시명을 입력해 주세요"
+                                err = "장소명을 입력해 주세요"
                                 confirming = false
                                 return@launch
                             }
@@ -193,24 +355,24 @@ fun CityConfirmField(
                             } else {
                                 val geo = geocoder.search(name, countryHint)
                                 if (geo == null) {
-                                    err = "도시를 찾을 수 없습니다"
+                                    err = "장소를 찾을 수 없습니다. 목록에서 선택해 주세요."
                                     confirming = false
                                     return@launch
                                 }
-                                CityPoint(name = geo.name, lat = geo.lat, lon = geo.lon, confirmed = true)
+                                CityPoint(
+                                    name = geo.displayName.split(",").take(2).joinToString(", ").ifBlank { geo.name },
+                                    lat = geo.lat,
+                                    lon = geo.lon,
+                                    confirmed = true,
+                                )
                             }
                             onConfirm(resolved)
                             confirming = false
                         }
                     },
                     enabled = !confirming,
-                    modifier = Modifier.weight(1f),
+                    modifier = Modifier.fillMaxWidth(),
                 ) { Text(if (confirming) "확인 중…" else "확인") }
-            } else {
-                OutlinedButton(
-                    onClick = { onConfirm(CityPoint()) },
-                    modifier = Modifier.weight(1f),
-                ) { Text("수정") }
             }
         }
         if (err.isNotBlank()) {
@@ -267,7 +429,7 @@ fun LegRouteEditor(
                 catalog = catalog,
                 geocoder = geocoder,
                 countryHint = countryHint,
-                label = "도보 출발지",
+                label = "도보 출발지 (도시·거리·장소)",
             )
 
             leg.waypoints.forEachIndexed { wi, wp ->
@@ -290,7 +452,7 @@ fun LegRouteEditor(
                             catalog = catalog,
                             geocoder = geocoder,
                             countryHint = countryHint,
-                            label = "경유지",
+                            label = "경유지 (도시·거리·장소)",
                         )
                     }
                     IconButton(
@@ -326,7 +488,7 @@ fun LegRouteEditor(
                 catalog = catalog,
                 geocoder = geocoder,
                 countryHint = countryHint,
-                label = "도보 도착지",
+                label = "도보 도착지 (도시·거리·장소)",
             )
         }
     }
@@ -346,6 +508,7 @@ fun buildStopsFromLegs(legs: List<ScheduleLeg>): List<com.mcpauto.walkingoffline
                     name = p.name,
                     lat = p.lat,
                     lon = p.lon,
+                    radiusKm = com.mcpauto.walkingofflineguide.data.STOP_DOWNLOAD_RADIUS_KM,
                 )
             }
     }

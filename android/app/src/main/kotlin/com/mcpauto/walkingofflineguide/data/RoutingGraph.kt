@@ -23,10 +23,12 @@ class RoutingGraph private constructor(
     private val nodes: List<Pair<Double, Double>>,
     private val adjacency: List<List<Pair<Int, Int>>>,
 ) {
+    val hasData: Boolean get() = nodes.isNotEmpty()
+
     fun route(fromLat: Double, fromLon: Double, toLat: Double, toLon: Double): List<Pair<Double, Double>> {
         if (nodes.isEmpty()) return listOf(fromLat to fromLon, toLat to toLon)
-        val start = nearestNode(fromLat, fromLon, maxM = 800.0) ?: return listOf(fromLat to fromLon, toLat to toLon)
-        val goal = nearestNode(toLat, toLon, maxM = 800.0) ?: return listOf(fromLat to fromLon, toLat to toLon)
+        val start = nearestNode(fromLat, fromLon, maxM = 1_500.0) ?: return listOf(fromLat to fromLon, toLat to toLon)
+        val goal = nearestNode(toLat, toLon, maxM = 1_500.0) ?: return listOf(fromLat to fromLon, toLat to toLon)
         if (start == goal) return listOf(fromLat to fromLon, nodes[start].first to nodes[start].second, toLat to toLon)
 
         val dist = IntArray(nodes.size) { Int.MAX_VALUE }
@@ -107,8 +109,17 @@ class RoutingGraph private constructor(
                     fromFile(json.decodeFromString<GraphFile>(file.readText()))
                 }.getOrElse { Empty }
             }
-            cache[regionId] = graph
+            if (graph.hasData) cache[regionId] = graph
             graph
+        }
+
+        suspend fun reload(context: Context, regionId: String): RoutingGraph {
+            invalidate(regionId)
+            return load(context, regionId)
+        }
+
+        fun invalidate(regionId: String) {
+            cache.remove(regionId)
         }
 
         private fun fromFile(file: GraphFile): RoutingGraph {

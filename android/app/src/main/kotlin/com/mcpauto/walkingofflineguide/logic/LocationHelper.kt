@@ -26,12 +26,13 @@ class LocationHelper(context: Context) {
     fun startUpdates(
         onUpdate: (UserPosition) -> Unit,
         bearingProvider: NavigationBearingProvider? = null,
+        navigationLock: Boolean = false,
     ) {
         stopUpdates()
         this.bearingProvider = bearingProvider
-        val request = LocationRequest.Builder(Priority.PRIORITY_HIGH_ACCURACY, 200L)
-            .setMinUpdateIntervalMillis(100L)
-            .setMinUpdateDistanceMeters(1f)
+        val request = LocationRequest.Builder(Priority.PRIORITY_HIGH_ACCURACY, if (navigationLock) 400L else 200L)
+            .setMinUpdateIntervalMillis(if (navigationLock) 300L else 100L)
+            .setMinUpdateDistanceMeters(if (navigationLock) 2f else 1f)
             .setMaxUpdateDelayMillis(500L)
             .setWaitForAccurateLocation(false)
             .build()
@@ -66,7 +67,9 @@ class LocationHelper(context: Context) {
     suspend fun acquirePosition(): UserPosition = suspendCancellableCoroutine { cont ->
         client.lastLocation
             .addOnSuccessListener { last ->
-                if (last != null && cont.isActive) {
+                val stale = last == null || last.elapsedRealtimeAgeMillis > 60_000 ||
+                    (last.hasAccuracy() && last.accuracy > 400f)
+                if (!stale && cont.isActive) {
                     cont.resume(toUserPosition(last))
                     return@addOnSuccessListener
                 }
@@ -74,16 +77,20 @@ class LocationHelper(context: Context) {
                 cont.invokeOnCancellation { token.cancel() }
                 client.getCurrentLocation(Priority.PRIORITY_HIGH_ACCURACY, token.token)
                     .addOnSuccessListener { loc ->
-                        if (loc != null && cont.isActive) {
-                            cont.resume(toUserPosition(loc))
-                        } else if (cont.isActive) {
-                            cont.resumeWithException(
-                                IllegalStateException("GPS 수신 실패 — 실외에서 다시 시도해 주세요."),
+                        when {
+                            loc != null && cont.isActive -> cont.resume(toUserPosition(loc))
+                            last != null && cont.isActive -> cont.resume(toUserPosition(last))
+                            cont.isActive -> cont.resumeWithException(
+                                IllegalStateException("위치 수신 실패 — GPS·WiFi 위치를 켠 뒤 다시 시도해 주세요."),
                             )
                         }
                     }
                     .addOnFailureListener { e ->
-                        if (cont.isActive) cont.resumeWithException(e)
+                        if (last != null && cont.isActive) {
+                            cont.resume(toUserPosition(last))
+                        } else if (cont.isActive) {
+                            cont.resumeWithException(e)
+                        }
                     }
             }
             .addOnFailureListener { e ->
