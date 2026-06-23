@@ -314,7 +314,11 @@ class RegionDownloadManager(
             }
             globalDone += bytes
             if (cancelled) throw CancellationException("download paused")
-            if (tileCount == 0 && !zipFile.exists()) continue
+            if (tileCount == 0 && !zipFile.exists()) {
+                throw IllegalStateException(
+                    "지도 타일을 받지 못했습니다. WiFi 연결·네트워크 상태를 확인한 뒤 이어받기해 주세요.",
+                )
+            }
 
             record = record.copy(downloadBytes = bytes, downloadComplete = true)
             store.saveRegion(record)

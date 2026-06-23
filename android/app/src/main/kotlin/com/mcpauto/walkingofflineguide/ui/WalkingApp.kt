@@ -87,6 +87,7 @@ import com.mcpauto.walkingofflineguide.data.CrashRecovery
 import com.mcpauto.walkingofflineguide.data.defaultScheduleLeg
 import com.mcpauto.walkingofflineguide.data.DownloadJobState
 import com.mcpauto.walkingofflineguide.data.GeoCatalog
+import com.mcpauto.walkingofflineguide.data.RegionPlayability
 import com.mcpauto.walkingofflineguide.data.RegionRecord
 import com.mcpauto.walkingofflineguide.data.ScheduleLeg
 import com.mcpauto.walkingofflineguide.data.normalizeLegDates
@@ -113,6 +114,7 @@ import com.mcpauto.walkingofflineguide.network.WifiGate
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.io.File
 import kotlinx.coroutines.Dispatchers
 import java.time.LocalDate
 
@@ -485,7 +487,18 @@ fun WalkingApp() {
             showCurrentRegion = config.basicSetupComplete &&
                 (
                     config.homeCountry.isNotBlank() ||
-                        regions.any { it.downloadComplete && !TripNavigation.isHomeRegion(config, it) }
+                        regions.any { r ->
+                            !TripNavigation.isHomeRegion(config, r) &&
+                                (
+                                    r.downloadComplete ||
+                                        RegionPlayability.hasPartialLocalContent(
+                                            RegionPlayability.regionDir(
+                                                File(context.filesDir, "walking_data"),
+                                                r.id,
+                                            ),
+                                        )
+                                    )
+                        }
                     ),
             onOptions = { showOptions = true },
             onExit = { showExitConfirm = true },
@@ -577,6 +590,7 @@ private data class HubRow(
     val activeDownload: Boolean,
     val region: RegionRecord?,
     val visited: Boolean,
+    val mapPlayable: Boolean = false,
 )
 
 @Composable
@@ -663,7 +677,7 @@ private fun HubCityActionSheet(
             color = AppMenuStyle.text,
             modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp),
         )
-        if (!row.isDownloading && row.region != null) {
+        if ((!row.isDownloading && row.region != null) || (row.isDownloading && row.mapPlayable)) {
             HubActionRow("지도 열기", AppMenuStyle.accent, onOpenMap)
         }
         if (row.isDownloading) {
@@ -751,7 +765,15 @@ private fun HubScreen(
         downloadHints = hints
     }
 
-    val downloadRows = remember(pendingDownloadJob, partialRegions, downloadHints, downloadRunning) {
+    val walkingDataRoot = remember { File(context.filesDir, "walking_data") }
+
+    fun regionPlayable(region: RegionRecord?): Boolean {
+        if (region == null) return false
+        if (region.downloadComplete) return true
+        return RegionPlayability.hasPartialLocalContent(RegionPlayability.regionDir(walkingDataRoot, region.id))
+    }
+
+    val downloadRows = remember(pendingDownloadJob, partialRegions, downloadHints, downloadRunning, regions) {
         val rows = mutableListOf<HubRow>()
         val seen = mutableSetOf<String>()
         val job = pendingDownloadJob
@@ -763,8 +785,15 @@ private fun HubScreen(
                         pr.cityName.contains(stop.name, ignoreCase = true) ||
                         stop.name.contains(pr.cityName, ignoreCase = true)
                 }
+                val playable = regionPlayable(partial)
                 val hint = downloadHints[stop.name]
                 val subtitle = when {
+                    playable && downloadRunning && !hint.isNullOrBlank() ->
+                        "일부 받음 · 탭하여 지도 · $hint"
+                    playable && downloadRunning -> "일부 받음 · 탭하여 지도 열기"
+                    playable && !hint.isNullOrBlank() ->
+                        "일부 받음 · 탭하여 지도 · $hint · 이어받기 가능"
+                    playable -> "일부 받음 · 탭하여 지도 · 이어받기 가능"
                     downloadRunning && !hint.isNullOrBlank() -> "다운로드 중 · $hint"
                     downloadRunning -> "다운로드 중 · WiFi 유지"
                     !hint.isNullOrBlank() -> "일시 중지 · $hint · 탭하여 이어받기"
@@ -779,19 +808,27 @@ private fun HubScreen(
                     activeDownload = downloadRunning,
                     region = partial,
                     visited = false,
+                    mapPlayable = playable,
                 )
             }
         }
         partialRegions.filter { pr -> pr.cityName !in seen }.forEach { pr ->
+            val playable = regionPlayable(pr)
             rows += HubRow(
                 key = "partial:${pr.id}",
                 countryLabel = pr.countryLabel,
                 cityName = pr.cityName,
-                subtitle = if (downloadRunning) "다운로드 중 · 미완료 지역" else "미완료 · 탭하여 이어받기",
+                subtitle = when {
+                    playable && downloadRunning -> "일부 받음 · 탭하여 지도 · 다운로드 중"
+                    playable -> "일부 받음 · 탭하여 지도 · 이어받기 가능"
+                    downloadRunning -> "다운로드 중 · 미완료 지역"
+                    else -> "미완료 · 탭하여 이어받기"
+                },
                 isDownloading = true,
                 activeDownload = downloadRunning,
                 region = pr,
                 visited = false,
+                mapPlayable = playable,
             )
         }
         rows
@@ -813,7 +850,12 @@ private fun HubScreen(
     }
 
     val hubRows = downloadRows + readyRows
-    val mapRegions = (partialRegions + completed).distinctBy { it.id }
+    val mapPins = remember(regions, partialRegions, completed) {
+        (partialRegions + completed).distinctBy { it.id }.mapNotNull { r ->
+            val dir = RegionPlayability.regionDir(walkingDataRoot, r.id)
+            RegionPlayability.pinState(r, dir)?.let { WorldMapPin(r, it) }
+        }
+    }
     var menuRow by remember { mutableStateOf<HubRow?>(null) }
     var confirmDeleteRow by remember { mutableStateOf<HubRow?>(null) }
 
@@ -855,7 +897,7 @@ private fun HubScreen(
                 .padding(horizontal = 10.dp, vertical = 4.dp),
         ) {
             WorldMapCanvas(
-                regions = mapRegions,
+                pins = mapPins,
                 highlightId = highlightId,
                 blinkHighlight = blinkHighlight,
                 onRegionTap = onRegionMapTap,
@@ -905,7 +947,8 @@ private fun HubScreen(
                                     onTap = {
                                         menuRow = null
                                         when {
-                                            row.region != null -> onRegionSelect(row.region)
+                                            row.region != null && (row.mapPlayable || row.region.downloadComplete) ->
+                                                onRegionSelect(row.region)
                                             row.isDownloading -> onResumeDownload()
                                         }
                                     },
